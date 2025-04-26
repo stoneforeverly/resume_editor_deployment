@@ -51,6 +51,6 @@ jobs:
       packages: write
       contents: read
     uses: 
-      stoneforeverly/resumeAPI/.github/workflows/build-push.yml@main
+      QiushiZhou/resumeAPI/.github/workflows/build-push.yml@main
     with: 
       VITE_SERVER_HOST: "http://$(cat ip.txt)"
