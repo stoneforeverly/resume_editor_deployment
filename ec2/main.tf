@@ -1,6 +1,6 @@
 terraform {
   backend "s3" {
-    bucket = "resume-editor-terraform-state-bucket"
+    bucket = "resume-editor-api-terraform-state-bucket"
     key    = "state/resume-api-ec2-state.tfstate"
     region = "ap-southeast-2"
   }
