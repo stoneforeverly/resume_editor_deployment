@@ -72,7 +72,7 @@ resource "aws_security_group" "allow_ssh" {
 
 # Generate a key pair
 resource "aws_key_pair" "deployer" {
-  key_name   = "deployer-key"
+  key_name   = "deployer-api-key"
   public_key = file("${path.module}/id_ed.pub")
 }
 
