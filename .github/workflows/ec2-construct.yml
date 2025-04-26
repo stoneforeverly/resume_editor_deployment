@@ -50,6 +50,7 @@ jobs:
     permissions:  # 关键修复：显式授予写权限
       packages: write
       contents: read
-    uses: QiushiZhou/resumeAPI/.github/workflows/build-push.yml@main
+    uses: 
+      stoneforeverly/resumeAPI/.github/workflows/build-push.yml@main
     with: 
       VITE_SERVER_HOST: "http://$(cat ip.txt)"
