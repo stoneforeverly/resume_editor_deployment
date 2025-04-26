@@ -1,0 +1,48 @@
+name: EC2 Deploy
+
+on:
+  workflow_dispatch:
+# Define environment variables  
+env:  
+  AWS_REGION: ap-southeast-2
+  UPDATE_SCRIPT: .github/workflows/ec2_update.sh
+
+
+jobs:
+  deploy:
+    name: Deploy Docker Images to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Set up AWS CLI
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Create Private Key File
+      run: |
+        which ssh-agent || ( apt-get update -y && apt-get install openssh-client git -y )
+        eval $(ssh-agent -s)
+        mkdir -p ~/.ssh
+        echo "${{vars.AWS_SSH_PRIVATE_KEY}}" | tr -d '\r' > ~/.ssh/id_ed
+        chmod 600 ~/.ssh/id_ed
+        ssh-add ~/.ssh/id_ed
+        touch ~/.ssh/config
+        touch ~/.ssh/known_hosts
+        chmod 600 ~/.ssh/known_hosts
+        ssh-keyscan 13.210.189.17 >> ~/.ssh/known_hosts
+        scp -o StrictHostKeyChecking=no -r ${{ env.UPDATE_SCRIPT }} ec2-user@13.210.189.17:/home/ec2-user/
+        ssh -o StrictHostKeyChecking=no ec2-user@13.210.189.17 << 'EOF'
+          export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          chmod +x /home/ec2-user/ec2_update.sh
+          /home/ec2-user/ec2_update.sh
+        EOF
+        
+  
+        
+          
