@@ -56,13 +56,8 @@ jobs:
     permissions:
       packages: write
       contents: read
-      id-token: write  # 如果使用 OIDC 需要此权限
 
     steps:
-      # 关键修改 1: 检出当前仓库（terraform）和目标仓库（resumeAPI）
-      - name: Checkout Terraform Repo
-        uses: actions/checkout@v3
-
       - name: Checkout ResumeAPI Repo
         uses: actions/checkout@v3
         with:
