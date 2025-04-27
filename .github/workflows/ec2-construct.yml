@@ -15,7 +15,6 @@ jobs:
         working-directory: ./ec2/
 
     steps:
-      # 检出当前仓库（terraform 仓库）
       - name: Checkout terraform code
         uses: actions/checkout@v3
 
@@ -44,19 +43,44 @@ jobs:
       - name: Get EC2 IP
         run: 
           terraform output -raw instance_public_ip > ip.txt
+
+      - name: Upload IP File
+        uses: actions/upload-artifact@v3
+        with:
+          name: ip-file
+          path: ip.txt
   
   build-image:
     name: AWS ECR preparation
     needs: terraform
+    runs-on: ubuntu-latest  # 必须明确指定运行环境
     permissions:  # 关键修复：显式授予写权限
       packages: write
       contents: read
-    uses: 
-      QiushiZhou/resumeAPI/.github/workflows/build-push.yml@main
-    with: 
-      VITE_SERVER_HOST: "http://$(cat ip.txt)"
-      DOCKER_COMPOSE_FILE: ./resumeAPI/docker-compose.yml  # 显式指定跨仓库路径
-    secrets:
-      # 传递所有必需的 Secrets
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    steps:
+      # 检出当前仓库（terraform）和目标仓库（resumeAPI）
+      - name: Checkout Terraform Repo
+        uses: actions/checkout@v3
+
+      - name: Checkout ResumeAPI Repo
+        uses: actions/checkout@v3
+        with:
+          repository: QiushiZhou/resumeAPI  # 显式指定目标仓库
+          path: resumeAPI
+          
+      # 下载 IP 文件
+      - name: Download IP File
+        uses: actions/download-artifact@v3
+        with:
+          name: ip-file
+          path: .
+          
+        # 传递完整的 docker-compose.yml 路径
+      - name: Invoke Build and Push
+        uses: QiushiZhou/resumeAPI/.github/workflows/build-push.yml@main
+        with:
+          VITE_SERVER_HOST: "http://$(cat ip.txt)"
+          DOCKER_COMPOSE_FILE: ./resumeAPI/docker-compose.yml  # 显式指定跨仓库路径
+        secrets:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
