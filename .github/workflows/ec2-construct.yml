@@ -12,15 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ec2/
+        working-directory: ./ec2/
 
     steps:
-      # 检出当前仓库（terraform 仓库）
-      - name: Checkout code
-        uses: actions/checkout@v3
-        with:
-          repository: stoneforeverly/resume_editor_deployment  # 当前仓库名
-          
       # 检出目标仓库（resumeAPI 仓库）
       - name: Checkout resumeAPI code
         uses: actions/checkout@v4
