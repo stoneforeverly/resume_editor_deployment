@@ -57,8 +57,6 @@ jobs:
       contents: read 
     uses:  QiushiZhou/resumeAPI/.github/workflows/build-push.yml@main
     with:
-      repository: QiushiZhou/resumeAPI 
-      path: resumeAPI
       VITE_SERVER_HOST: "http://${{ steps.get_ip.outputs.ip }}"
       DOCKER_COMPOSE_FILE: ./resumeAPI/docker-compose.yml 
     secrets: 
