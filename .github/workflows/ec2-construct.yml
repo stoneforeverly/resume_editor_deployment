@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./ec2/
+        working-directory: ec2/
 
     steps:
       # 检出当前仓库（terraform 仓库）
