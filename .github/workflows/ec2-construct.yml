@@ -1,9 +1,9 @@
 name: EC2 Construct
 
 on:
-  workflow_dispatch:  
+  workflow_dispatch:
 
-env:  
+env:
   AWS_REGION: ap-southeast-2
 
 jobs:
@@ -15,7 +15,7 @@ jobs:
         working-directory: ./ec2/
 
     steps:
-      - name: Checkout terraform code
+      - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Set up Terraform
@@ -26,9 +26,9 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}  
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}  
-          aws-region: ${{ env.AWS_REGION }} 
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Initialize Terraform
         run: terraform init
@@ -39,26 +39,27 @@ jobs:
       - name: Terraform Apply
         if: github.ref == 'refs/heads/main'
         run: terraform apply -auto-approve
-      
+
       - name: Get EC2 IP
-        run: 
-          terraform output -raw instance_public_ip > ip.txt
+        run: terraform output -raw instance_public_ip > ip.txt
 
       - name: Upload IP File
         uses: actions/upload-artifact@v3
         with:
           name: ip-file
           path: ip.txt
-  
+          
   build-image:
     name: AWS ECR preparation
     needs: terraform
     runs-on: ubuntu-latest  # 必须明确指定运行环境
-    permissions:  # 关键修复：显式授予写权限
+    permissions:
       packages: write
       contents: read
+      id-token: write  # 如果使用 OIDC 需要此权限
+
     steps:
-      # 检出当前仓库（terraform）和目标仓库（resumeAPI）
+      # 关键修改 1: 检出当前仓库（terraform）和目标仓库（resumeAPI）
       - name: Checkout Terraform Repo
         uses: actions/checkout@v3
 
@@ -67,19 +68,17 @@ jobs:
         with:
           repository: QiushiZhou/resumeAPI  # 显式指定目标仓库
           path: resumeAPI
-          
-      # 下载 IP 文件
+
+      # 关键修改 2: 下载 IP 文件
       - name: Download IP File
         uses: actions/download-artifact@v3
         with:
           name: ip-file
           path: .
-          
-        # 传递完整的 docker-compose.yml 路径
+
+      # 关键修改 3: 传递完整的 docker-compose.yml 路径
       - name: Invoke Build and Push
         uses: QiushiZhou/resumeAPI/.github/workflows/build-push.yml@main
         with:
           VITE_SERVER_HOST: "http://$(cat ip.txt)"
           DOCKER_COMPOSE_FILE: ./resumeAPI/docker-compose.yml  # 显式指定跨仓库路径
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
