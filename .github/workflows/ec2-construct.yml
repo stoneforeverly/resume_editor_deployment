@@ -52,36 +52,44 @@ jobs:
   build-image: 
     name: AWS ECR preparation 
     needs: terraform 
-    runs-on: ubuntu-latest 
     permissions: 
       packages: write 
       contents: read 
+    uses:  QiushiZhou/resumeAPI/.github/workflows/build-push.yml@main
+    with:
+      repository: QiushiZhou/resumeAPI 
+      path: resumeAPI
+      VITE_SERVER_HOST: "http://${{ steps.get_ip.outputs.ip }}"
+      DOCKER_COMPOSE_FILE: ./resumeAPI/docker-compose.yml 
+    secrets: 
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }} 
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
  
-    steps: 
-      - name: Checkout Terraform Repo 
-        uses: actions/checkout@v4
+    # steps: 
+    #   - name: Checkout Terraform Repo 
+    #     uses: actions/checkout@v4
  
-      - name: Checkout ResumeAPI Repo 
-        uses: actions/checkout@v4
-        with: 
-          repository: QiushiZhou/resumeAPI 
-          path: resumeAPI 
+    #   - name: Checkout ResumeAPI Repo 
+    #     uses: actions/checkout@v4
+    #     with: 
+    #       repository: QiushiZhou/resumeAPI 
+    #       path: resumeAPI 
  
-      - name: Download IP File 
-        uses: actions/download-artifact@v3 
-        with: 
-          name: ip-file 
-          path: . 
+    #   - name: Download IP File 
+    #     uses: actions/download-artifact@v3 
+    #     with: 
+    #       name: ip-file 
+    #       path: . 
           
-      - name: Read IP File
-        id: get_ip
-        run: echo "ip=$(cat ip.txt)" >> $GITHUB_OUTPUT
+    #   - name: Read IP File
+    #     id: get_ip
+    #     run: echo "ip=$(cat ip.txt)" >> $GITHUB_OUTPUT
  
-      - name: Invoke Build and Push 
-        uses: QiushiZhou/resumeAPI/.github/workflows/build-push.yml@main 
-        with: 
-          VITE_SERVER_HOST: "http://${{ steps.get_ip.outputs.ip }}"
-          DOCKER_COMPOSE_FILE: ./resumeAPI/docker-compose.yml 
-        env: 
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }} 
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    #   - name: Invoke Build and Push 
+    #     uses: QiushiZhou/resumeAPI/.github/workflows/build-push.yml@main 
+    #     with: 
+    #       VITE_SERVER_HOST: "http://${{ steps.get_ip.outputs.ip }}"
+    #       DOCKER_COMPOSE_FILE: ./resumeAPI/docker-compose.yml 
+    #     env: 
+    #       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }} 
+    #       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
