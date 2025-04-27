@@ -15,8 +15,17 @@ jobs:
         working-directory: ./ec2/
 
     steps:
+      # 检出当前仓库（terraform 仓库）
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          repository: your-username/terraform-repo-name  # 当前仓库名
+          
+      # 检出目标仓库（resumeAPI 仓库）
+      - name: Checkout resumeAPI code
+        uses: actions/checkout@v4
+        with:
+          repository: QiushiZhou/resumeAPI  # 目标仓库名
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
