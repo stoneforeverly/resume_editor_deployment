@@ -81,6 +81,5 @@ jobs:
         with:
           VITE_SERVER_HOST: "http://$(cat ip.txt)"
           DOCKER_COMPOSE_FILE: ./resumeAPI/docker-compose.yml  # 显式指定跨仓库路径
-        secrets:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
