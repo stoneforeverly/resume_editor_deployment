@@ -18,11 +18,6 @@ jobs:
       # 检出当前仓库（terraform 仓库）
       - name: Checkout terraform code
         uses: actions/checkout@v3
-      # 检出目标仓库（resumeAPI 仓库）
-      - name: Checkout resumeAPI code
-        uses: actions/checkout@v3
-        with:
-          repository: QiushiZhou/resumeAPI  # 目标仓库名
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
