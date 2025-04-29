@@ -71,6 +71,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ec2-ip
+          repository: stoneforeverly/resume_editor_deployment  # 目标仓库
+          run-id: 14735756038
           
       - name: Read EC2 IP 
         run: echo "SERVER_IP=$(cat ip.txt)" >> $GITHUB_ENV
