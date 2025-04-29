@@ -52,11 +52,11 @@ jobs:
          echo "======================="
              
         # 上传工件
-      - name: Upload IP Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ec2-ip
-          path: ip.txt
+      # - name: Upload IP Artifact
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: ec2-ip
+      #     path: ip.txt
  
   build-image: 
     name: AWS ECR preparation 
@@ -67,13 +67,13 @@ jobs:
       contents: read 
     steps:
      # 下载工件
-      - name: Download IP Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ec2-ip
+      # - name: Download IP Artifact
+      #   uses: actions/download-artifact@v4
+      #   with:
+      #     name: ec2-ip
           
-      - name: Read EC2 IP 
-        run: echo "SERVER_IP=$(cat ip.txt)" >> $GITHUB_ENV
+      # - name: Read EC2 IP 
+      #   run: echo "SERVER_IP=$(cat ip.txt)" >> $GITHUB_ENV
 
        # 调用子工作流程（需确保路径正确）
       - name: Invoke Build-Push Workflow
