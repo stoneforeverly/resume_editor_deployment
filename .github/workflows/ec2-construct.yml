@@ -70,7 +70,7 @@ jobs:
           path: resumeAPI
         
       - name: Invoke Build-Push Workflow
-        uses: ./.github/workflows/build-push.yml  # 同一仓库的路径
+        uses: QiushiZhou/resumeAPI/.github/workflows/push_to_ecr.yml@main  # 同一仓库的路径
         with:
           VITE_SERVER_HOST:  "http://$(cat ip.txt)"
           DOCKER_COMPOSE_FILE: ${{ github.event.inputs.compose-file-path }}
