@@ -76,6 +76,12 @@ jobs:
       #   run: echo "SERVER_IP=$(cat ip.txt)" >> $GITHUB_ENV
 
        # 调用子工作流程（需确保路径正确）
+      - name: Checkout ResumeAPI Repo
+        uses: actions/checkout@v4  # 升级到 v4
+        with:
+          repository: QiushiZhou/resumeAPI
+          path: resumeAPI
+        
       - name: Invoke Build-Push Workflow
         uses: ./.github/workflows/build-push.yml  # 同一仓库的路径
         with:
