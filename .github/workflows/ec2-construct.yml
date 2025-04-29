@@ -45,7 +45,12 @@ jobs:
         run: terraform apply -auto-approve 
  
       - name: Get EC2 IP 
-        run: terraform output -raw instance_public_ip > ip.txt 
+        run: |
+         terraform output -raw instance_public_ip > ip.txt
+         echo "===== IP 文件内容 ====="
+         cat ip.txt  # 调试输出
+         echo "======================="
+             
         # 上传工件
       - name: Upload IP Artifact
         uses: actions/upload-artifact@v4
