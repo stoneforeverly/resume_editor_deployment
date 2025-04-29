@@ -2,7 +2,12 @@ name: EC2 Construct
  
 on: 
   workflow_dispatch: 
- 
+   inputs:
+       compose-file-path:
+         description: "Docker Compose文件路径"
+         required: true
+         default: "./resumeAPI/docker-compose.yml"
+  
 env: 
   AWS_REGION: ap-southeast-2 
  
@@ -30,11 +35,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }} 
           aws-region: ${{ env.AWS_REGION }} 
  
-      - name: Initialize Terraform 
-        run: terraform init 
- 
-      - name: Terraform Plan 
-        run: terraform plan 
+      - name: Terraform Init & Plan 
+        run: |
+         terraform init
+         terraform plan 
  
       - name: Terraform Apply 
         if: github.ref == 'refs/heads/main' 
@@ -42,17 +46,34 @@ jobs:
  
       - name: Get EC2 IP 
         run: terraform output -raw instance_public_ip > ip.txt 
+        # 上传工件
+      - name: Upload IP Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ec2-ip
+          path: ip.txt
  
   build-image: 
     name: AWS ECR preparation 
     needs: terraform 
+    runs-on: ubuntu-latest  # 必须指定运行环境
     permissions: 
       packages: write 
       contents: read 
-    uses: QiushiZhou/resumeAPI/.github/workflows/build-push.yml@main
-    with:
-      VITE_SERVER_HOST: "http://$(cat ip.txt)"
-      DOCKER_COMPOSE_FILE: ./resumeAPI/docker-compose.yml
-    secrets: 
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }} 
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    steps:
+     # 下载工件
+      - name: Download IP Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ec2-ip
+          
+      - name: Read EC2 IP 
+        run: echo "SERVER_IP=$(cat ip.txt)" >> $GITHUB_ENV
+
+       # 调用子工作流程（需确保路径正确）
+      - name: Invoke Build-Push Workflow
+        uses: ./.github/workflows/build-push.yml  # 同一仓库的路径
+        with:
+          VITE_SERVER_HOST: "http://${{ env.SERVER_IP }}"
+          DOCKER_COMPOSE_FILE: ${{ github.event.inputs.compose-file-path }}
+          secrets: inherit  # 自动继承父级secrets
