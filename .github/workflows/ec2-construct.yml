@@ -50,13 +50,6 @@ jobs:
          echo "===== IP 文件内容 ====="
          cat ip.txt  # 调试输出
          echo "======================="
-
-        # 上传工件
-      - name: Upload IP Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ec2-ip
-          path: ip.txt
  
   build-image: 
     name: AWS ECR preparation 
@@ -66,17 +59,6 @@ jobs:
       packages: write 
       contents: read 
     steps:
-     # 下载工件
-      - name: Download IP Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ec2-ip
-          repository: stoneforeverly/resume_editor_deployment/ec2  # 目标仓库
-          run-id: 14735756038
-          
-      - name: Read EC2 IP 
-        run: echo "SERVER_IP=$(cat ip.txt)" >> $GITHUB_ENV
-
        # 调用子工作流程（需确保路径正确）
       - name: Checkout Terraform Repo
         uses: actions/checkout@v4 
@@ -90,6 +72,6 @@ jobs:
       - name: Invoke Build-Push Workflow
         uses: ./.github/workflows/build-push.yml  # 同一仓库的路径
         with:
-          VITE_SERVER_HOST: "http://${{ env.SERVER_IP }}"
+          VITE_SERVER_HOST:  "http://$(cat ip.txt)"
           DOCKER_COMPOSE_FILE: ${{ github.event.inputs.compose-file-path }}
           secrets: inherit  # 自动继承父级secrets
