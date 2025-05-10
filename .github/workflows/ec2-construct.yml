@@ -76,30 +76,25 @@ jobs:
     needs: terraform
     runs-on: ubuntu-latest
     steps:
-      - name: Download IP file
-        uses: actions/download-artifact@v4
-        with:
-          name: ip-data
-          path: ip_data
+      # ... (前面的步骤保持不变) ...
 
-      - name: Read IP address
-        id: read-ip
-        run: |
-          IP=$(cat ip_data/ip.txt | tr -d '[:space:]')
-          echo "final_ip=${IP}" >> ${GITHUB_OUTPUT}
-          echo "验证通过的IP地址: ${IP}"
-
-      - name: Trigger remote workflow
+      - name: Trigger remote workflow (with PAT)
         uses: actions/github-script@v6
         env:
-          PAT: ${{ secrets.PAT }}
+          # 使用具有足够权限的PAT
+          PAT: ${{ secrets.PAT_WITH_WORKFLOW_ACCESS }}
         with:
           script: |
+            const { PAT } = process.env;
             const ip = `${{ steps.read-ip.outputs.final_ip }}`;
             const composePath = `${{ github.event.inputs.compose-file-path }}`;
             
             try {
-              await github.rest.actions.createWorkflowDispatch({
+              // 使用PAT初始化octokit
+              const octokit = github.getOctokit(PAT);
+              
+              // 触发工作流
+              await octokit.rest.actions.createWorkflowDispatch({
                 owner: 'QiushiZhou',
                 repo: 'resumeAPI',
                 workflow_id: 'build-push.yml',
@@ -109,8 +104,13 @@ jobs:
                   DOCKER_COMPOSE_FILE: composePath
                 }
               });
+              
               console.log(`成功触发工作流，IP: ${ip}`);
             } catch (error) {
               core.setFailed(`触发失败: ${error.message}`);
-              console.log('错误详情:', error.response?.data || error);
+              console.log('详细错误信息:', error.response?.data || error);
+              console.log('请检查:');
+              console.log('1. PAT是否有repo和workflow权限');
+              console.log('2. 目标仓库是否可访问');
+              console.log('3. 工作流文件路径是否正确');
             }
