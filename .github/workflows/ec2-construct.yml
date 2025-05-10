@@ -54,7 +54,7 @@ jobs:
           echo "$IP" > ip.txt
 
       - name: Upload clean IP file
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ip-file
           path: ip.txt
@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download IP file
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ip-file
 
@@ -90,7 +90,7 @@ jobs:
           echo "DOCKER_COMPOSE_FILE: ${{ github.event.inputs.compose-file-path }}"
           
       - name: Trigger remote workflow
-        uses: benc-uk/workflow-dispatch@v1
+        uses: benc-uk/workflow-dispatch@v2
         with:
          script: |
             try {
