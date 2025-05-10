@@ -12,6 +12,8 @@ docker rm resume-frontend  resume-backend
 # docker stop editor-frontend editor-backend market-frontend market-backend
 # docker rm editor-frontend editor-backend market-frontend market-backend
 
+docker network create resume-network || true
+
 # Pull the latest images
 docker pull ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/resume_backend-repo:backend-latest
 docker pull ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/resume_backend-repo:frontend-latest
