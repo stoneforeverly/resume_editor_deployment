@@ -6,7 +6,8 @@ on:
 env:  
   AWS_REGION: ap-southeast-2
   UPDATE_SCRIPT: .github/workflows/ec2_update.sh
-  EC2_IP: 3.107.160.80  
+  EC2_IP: 3.107.160.80
+  SSH_USER: ec2-user
 
 jobs:
   deploy:
@@ -36,35 +37,53 @@ jobs:
         
         # Write private key with proper formatting
         echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-        # Ensure key has proper line endings and formatting
-        sed -i 's/\\n/\n/g' ~/.ssh/id_rsa
-        sed -i '/^-----BEGIN .* PRIVATE KEY-----$/d' ~/.ssh/id_rsa
-        sed -i '/^-----END .* PRIVATE KEY-----$/d' ~/.ssh/id_rsa
-        echo "-----BEGIN RSA PRIVATE KEY-----" > ~/.ssh/id_rsa.tmp
-        cat ~/.ssh/id_rsa >> ~/.ssh/id_rsa.tmp
-        echo "-----END RSA PRIVATE KEY-----" >> ~/.ssh/id_rsa.tmp
-        mv ~/.ssh/id_rsa.tmp ~/.ssh/id_rsa
+        # Remove any carriage returns and ensure proper line endings
+        sed -i 's/\r$//' ~/.ssh/id_rsa
+        # Ensure key has proper BEGIN/END markers
+        if ! grep -q "BEGIN RSA PRIVATE KEY" ~/.ssh/id_rsa; then
+          echo "-----BEGIN RSA PRIVATE KEY-----" > ~/.ssh/id_rsa.tmp
+          cat ~/.ssh/id_rsa >> ~/.ssh/id_rsa.tmp
+          echo "-----END RSA PRIVATE KEY-----" >> ~/.ssh/id_rsa.tmp
+          mv ~/.ssh/id_rsa.tmp ~/.ssh/id_rsa
+        fi
         chmod 600 ~/.ssh/id_rsa
+        
+        # Verify key format
+        echo "=== Key Content ==="
+        head -n 3 ~/.ssh/id_rsa
+        echo "..."
+        tail -n 3 ~/.ssh/id_rsa
+        echo "=================="
         
         # Start SSH agent
         eval $(ssh-agent -s)
         
         # Add key to agent
-        ssh-add ~/.ssh/id_rsa || echo "Failed to add SSH key"
+        if ! ssh-add ~/.ssh/id_rsa; then
+          echo "=== SSH-ADD DEBUG ==="
+          ssh-keygen -l -f ~/.ssh/id_rsa || echo "Key validation failed"
+          echo "===================="
+          exit 1
+        fi
         
         # Configure known hosts
         ssh-keyscan -H ${{ env.EC2_IP }} >> ~/.ssh/known_hosts
         chmod 600 ~/.ssh/known_hosts
         
         # Test SSH connection
-        ssh -T -o StrictHostKeyChecking=no ec2-user@${{ env.EC2_IP }} exit || echo "SSH test failed"
+        if ! ssh -T -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} exit; then
+          echo "=== SSH DEBUG ==="
+          ssh -T -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} exit || true
+          echo "================"
+          exit 1
+        fi
         
         # Copy update script
-        scp -o StrictHostKeyChecking=no -r ${{ env.UPDATE_SCRIPT }} ec2-user@${{ env.EC2_IP }}:/home/ec2-user/
+        scp -o StrictHostKeyChecking=no -r ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:/home/${{ env.SSH_USER }}/
         
         # Execute remote commands
-        ssh -o StrictHostKeyChecking=no ec2-user@${{ env.EC2_IP }} << 'EOF'
+        ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
           export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          chmod +x /home/ec2-user/ec2_update.sh
-          /home/ec2-user/ec2_update.sh
+          chmod +x /home/${{ env.SSH_USER }}/ec2_update.sh
+          /home/${{ env.SSH_USER }}/ec2_update.sh
         EOF
