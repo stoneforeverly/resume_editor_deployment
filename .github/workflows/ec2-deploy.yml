@@ -2,7 +2,7 @@ name: EC2 Deploy
 
 on:
   workflow_dispatch:
-env:  
+env:
   AWS_REGION: ap-southeast-2
   UPDATE_SCRIPT: .github/workflows/ec2_update.sh
   EC2_IP: 3.107.160.80
@@ -28,48 +28,85 @@ jobs:
       run: |
         # Install dependencies
         sudo apt-get update -y
-        sudo apt-get install -y openssh-client git
+        sudo apt-get install -y openssh-client git jq
         
-        # Setup SSH
+        # Setup SSH directory
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
-        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
-        chmod 600 ~/.ssh/id_ed25519
+        
+        # Write private key with proper formatting
+        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/temp_key
+        # Remove any Windows line endings
+        sed -i 's/\r$//' ~/.ssh/temp_key
+        # Remove any GitHub-added formatting
+        sed -i '/^\*\*\*/,/^\*\*\*/d' ~/.ssh/temp_key
+        
+        # Detect key type and format appropriately
+        if grep -q "BEGIN OPENSSH PRIVATE KEY" ~/.ssh/temp_key; then
+          echo "Detected OpenSSH format key"
+          KEY_FILE=~/.ssh/id_ed25519
+          mv ~/.ssh/temp_key $KEY_FILE
+        elif grep -q "BEGIN RSA PRIVATE KEY" ~/.ssh/temp_key; then
+          echo "Detected RSA format key"
+          KEY_FILE=~/.ssh/id_rsa
+          mv ~/.ssh/temp_key $KEY_FILE
+        else
+          echo "=== ERROR: Unknown key format ==="
+          cat ~/.ssh/temp_key
+          echo "==============================="
+          exit 1
+        fi
+        
+        chmod 600 $KEY_FILE
+        
+        # Verify key format
+        echo "=== Key Verification ==="
+        ssh-keygen -l -f $KEY_FILE || (echo "Key validation failed" && exit 1)
+        echo "======================"
         
         # Start SSH agent
         eval $(ssh-agent -s)
-        ssh-add ~/.ssh/id_ed25519
+        
+        # Add key with retry logic
+        MAX_RETRIES=3
+        for i in $(seq 1 $MAX_RETRIES); do
+          if ssh-add $KEY_FILE; then
+            echo "Key added successfully"
+            break
+          else
+            echo "Failed to add key (attempt $i/$MAX_RETRIES)"
+            if [ $i -eq $MAX_RETRIES ]; then
+              echo "=== SSH Debug Info ==="
+              ssh-add -vvv $KEY_FILE || true
+              echo "===================="
+              exit 1
+            fi
+            sleep 2
+          fi
+        done
         
         # Configure known hosts
         ssh-keyscan -H ${{ env.EC2_IP }} >> ~/.ssh/known_hosts
         chmod 600 ~/.ssh/known_hosts
         
-        # Prepare remote environment
+        # Test connection
+        ssh -T -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} exit || (echo "SSH connection failed" && exit 1)
+        
+        # Copy update script
+        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ || (echo "SCP failed" && exit 1)
+        
+        # Execute remote commands
         ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
-          # Install Docker
+          # Install required packages
           sudo yum update -y
-          sudo yum install -y docker
+          sudo yum install -y docker awscli
+          
+          # Start and enable Docker
           sudo systemctl start docker
           sudo systemctl enable docker
           sudo usermod -aG docker $USER
           
-          # Install AWS CLI
-          sudo yum install -y awscli
-          mkdir -p ~/.aws
-          echo "[default]
-          region = $AWS_REGION
-          output = json" > ~/.aws/config
-          
-          # Install Docker Compose
-          sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-          sudo chmod +x /usr/local/bin/docker-compose
-        EOF
-        
-        # Copy update script
-        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ 
-        
-        # Execute update script with environment variables
-        ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
+          # Execute update script
           export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
           export AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
           export AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
