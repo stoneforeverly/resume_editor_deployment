@@ -5,7 +5,7 @@ on:
 env:
   AWS_REGION: ap-southeast-2
   UPDATE_SCRIPT: .github/workflows/ec2_update.sh
-  EC2_IP: 54.252.219.100
+  EC2_IP: 54.252.183.163
   SSH_USER: ec2-user
 
 jobs:
@@ -28,41 +28,41 @@ jobs:
       run: |
         # Install dependencies
         sudo apt-get update -y
-        sudo apt-get install -y openssh-client git
+        sudo apt-get install -y openssh-client git jq
         
         # Setup SSH directory
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
         
-        # Write private key with exact formatting
-        cat << 'EOF' > ~/.ssh/id_ed25519
-        ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-        EOF
+        # Reconstruct key file with proper formatting
+        KEY_CONTENT="${{ secrets.EC2_SSH_PRIVATE_KEY }}"
+        echo "-----BEGIN OPENSSH PRIVATE KEY-----" > ~/.ssh/id_ed25519
+        echo "$KEY_CONTENT" | jq -Rr 'gsub("\\\\t";"  ")' | sed -e '/^-----/d' -e '/^$/d' >> ~/.ssh/id_ed25519
+        echo "-----END OPENSSH PRIVATE KEY-----" >> ~/.ssh/id_ed25519
         
-        # Process key file
-        sed -i '/^-----BEGIN OPENSSH PRIVATE KEY-----$/,/^-----END OPENSSH PRIVATE KEY-----$/!d' ~/.ssh/id_ed25519
-        sed -i '/^$/d' ~/.ssh/id_ed25519
-        chmod 600 ~/.ssh/id_ed25519
-        
-        # Verify key
-        echo "=== Key Content ==="
+        # Verify key reconstruction
+        echo "=== Reconstructed Key ==="
         head -n 3 ~/.ssh/id_ed25519
         echo "..."
         tail -n 3 ~/.ssh/id_ed25519
-        echo "=================="
+        echo "======================="
         
+        # Strict validation
+        chmod 600 ~/.ssh/id_ed25519
         if ! ssh-keygen -l -f ~/.ssh/id_ed25519; then
-          echo "=== HEX DUMP ==="
-          hexdump -C ~/.ssh/id_ed25519 | head -n 10
-          echo "==============="
+          echo "=== Key Validation Failed ==="
+          echo "Original content:"
+          echo "$KEY_CONTENT" | head -n 5
+          echo "..."
+          echo "$KEY_CONTENT" | tail -n 5
           exit 1
         fi
         
         # Start SSH agent
         eval $(ssh-agent -s)
         if ! ssh-add ~/.ssh/id_ed25519; then
-          echo "=== SSH-ADD DEBUG ==="
-          ssh-add -vvv ~/.ssh/id_ed25519
+          echo "=== SSH-ADD Debug ==="
+          ssh-keygen -lvf ~/.ssh/id_ed25519
           exit 1
         fi
         
@@ -70,18 +70,18 @@ jobs:
         ssh-keyscan -H ${{ env.EC2_IP }} > ~/.ssh/known_hosts
         chmod 600 ~/.ssh/known_hosts
 
-    - name: Test Connection
+    - name: Verify Connection
       run: |
         ssh -T -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
-          echo "Connection successful!"
-          echo "Docker status: $(sudo systemctl is-active docker)"
+          echo "SSH Connection Successful!"
+          docker --version || echo "Docker not installed"
         EOF
 
-    - name: Deploy
+    - name: Deploy Application
       run: |
-        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/
+        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/deploy.sh
         ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
-          set -ex
-          chmod +x ~/ec2_update.sh
-          sudo ~/ec2_update.sh
+          set -e
+          chmod +x ~/deploy.sh
+          sudo ~/deploy.sh
         EOF
