@@ -2,11 +2,12 @@ name: EC2 Deploy
 
 on:
   workflow_dispatch:
-env:
+# Define environment variables  
+env:  
   AWS_REGION: ap-southeast-2
   UPDATE_SCRIPT: .github/workflows/ec2_update.sh
   EC2_IP: 54.252.219.100
-  SSH_USER: ec2-user
+
 
 jobs:
   deploy:
@@ -24,64 +25,21 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    - name: Setup SSH Connection (Direct Write)
+    - name: Create Private Key File
       run: |
-        # Install dependencies
-        sudo apt-get update -y
-        sudo apt-get install -y openssh-client git
-        
-        # Setup SSH directory
-        mkdir -p ~/.ssh
-        chmod 700 ~/.ssh
-        
-        # Write key with direct heredoc and strict validation
-        cat << 'EOF' > ~/.ssh/id_ed25519
-        ${{ secrets.EC2_SSH_PRIVATE_KEY}}
-        EOF
-        
-        # Strict key processing
-        sed -i '/^-----BEGIN OPENSSH PRIVATE KEY-----/,/^-----END OPENSSH PRIVATE KEY-----/!d' ~/.ssh/id_ed25519
-        sed -i '/^$/d' ~/.ssh/id_ed25519
-        chmod 600 ~/.ssh/id_ed25519
-        
-        # Binary validation
-        echo "=== Key Byte Count ==="
-        wc -c ~/.ssh/id_ed25519
-        echo "=== First 50 bytes ==="
-        head -c 50 ~/.ssh/id_ed25519 | xxd
-        echo "=== Last 50 bytes ==="
-        tail -c 50 ~/.ssh/id_ed25519 | xxd
-        
-        if ! ssh-keygen -l -f ~/.ssh/id_ed25519; then
-          echo "=== RAW KEY CONTENT ==="
-          cat ~/.ssh/id_ed25519
-          exit 1
-        fi
-        
-        # Start SSH agent
+        which ssh-agent || ( apt-get update -y && apt-get install openssh-client git -y )
         eval $(ssh-agent -s)
-        if ! ssh-add ~/.ssh/id_ed25519; then
-          echo "=== SSH-ADD DEBUG ==="
-          ssh-add -vvv ~/.ssh/id_ed25519
-          exit 1
-        fi
-        
-        # Configure known hosts
-        ssh-keyscan -H ${{ env.EC2_IP }} > ~/.ssh/known_hosts
+        mkdir -p ~/.ssh
+        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_ed
+        chmod 600 ~/.ssh/id_ed
+        ssh-add ~/.ssh/id_ed
+        touch ~/.ssh/config
+        touch ~/.ssh/known_hosts
         chmod 600 ~/.ssh/known_hosts
-
-    - name: Verify Connection
-      run: |
-        ssh -T -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
-          echo "SUCCESS: Connected to $(hostname)"
-          docker --version || echo "WARNING: Docker not found"
-        EOF
-
-    - name: Deploy Application
-      run: |
-        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/deploy.sh
-        ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
-          set -ex
-          chmod +x ~/deploy.sh
-          sudo ~/deploy.sh
+        ssh-keyscan 3.107.160.80 >> ~/.ssh/known_hosts
+        scp -o StrictHostKeyChecking=no -r ${{ env.UPDATE_SCRIPT }} ec2-user@54.252.219.100:/home/ec2-user/
+        ssh -o StrictHostKeyChecking=no ec2-user@54.252.219.100 << 'EOF'
+          export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          chmod +x /home/ec2-user/ec2_update.sh
+          /home/ec2-user/ec2_update.sh
         EOF
