@@ -68,6 +68,11 @@ jobs:
           IP=$(cat ip.txt)
           echo "IP_ADDRESS=$IP" >> $GITHUB_OUTPUT
 
+      - name: Debug variables
+        run: |
+          echo "IP: ${{ steps.ip.outputs.IP_ADDRESS }}"
+          echo "Compose Path: ${{ github.event.inputs.compose-file-path }}"
+
       - name: Trigger remote workflow
         uses: benc-uk/workflow-dispatch@v1
         with:
