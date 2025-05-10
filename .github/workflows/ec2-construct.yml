@@ -76,55 +76,25 @@ jobs:
     needs: terraform
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Download IP file
+        uses: actions/download-artifact@v4
+        with:
+          name: ip-data
+          path: ip_data
 
-      - name: Verify IP file exists
-        id: check-ip-file
-        run: |
-          if [ ! -f "ip_data/ip.txt" ]; then
-            echo "::error::IP文件不存在: ip_data/ip.txt"
-            echo "当前目录内容:"
-            ls -R
-            exit 1
-          fi
-          echo "IP文件存在"
-
-      - name: Read and validate IP
+      - name: Read IP address
         id: read-ip
         run: |
-          echo "当前工作目录: $(pwd)"
-          echo "尝试读取IP文件..."
-          
           IP=$(cat ip_data/ip.txt | tr -d '[:space:]')
-          if [[ -z "$IP" ]]; then
-            echo "::error::IP文件为空"
-            exit 1
-          fi
-          
-          if [[ ! $IP =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            echo "::error::无效的IP地址格式: $IP"
-            exit 1
-          fi
-          
           echo "final_ip=$IP" >> $GITHUB_OUTPUT
           echo "验证通过的IP地址: $IP"
 
-      - name: Debug outputs
-        run: |
-          echo "最终IP值: ${{ steps.read-ip.outputs.final_ip }}"
-          echo "Compose路径: ${{ github.event.inputs.compose-file-path }}"
-
-      - name: Trigger workflow
+      - name: Trigger remote workflow
         env:
           PAT: ${{ secrets.PAT }}
         run: |
           IP=${{ steps.read-ip.outputs.final_ip }}
           COMPOSE_PATH="${{ github.event.inputs.compose-file-path }}"
-          
-          echo "触发参数:"
-          echo "IP: http://$IP"
-          echo "Compose路径: $COMPOSE_PATH"
           
           curl -X POST \
             -H "Authorization: token $PAT" \
@@ -133,7 +103,7 @@ jobs:
             -d '{
               "ref": "main",
               "inputs": {
-                "server_host": "http://'"$IP"'",
-                "docker_compose_path": "'"$COMPOSE_PATH"'"
+                "VITE_SERVER_HOST": "http://'"$IP"'",
+                "DOCKER_COMPOSE_FILE": "'"$COMPOSE_PATH"'"
               }
             }'
