@@ -47,73 +47,35 @@ jobs:
       - name: Get EC2 IP 
         id: get-ip
         run: |
-          # 直接获取IP并去除所有非IP字符
           IP=$(terraform output -raw instance_public_ip | grep -Eo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
-          echo "提取的IP: $IP"
           echo "IP_ADDRESS=$IP" >> $GITHUB_OUTPUT
-          echo "$IP" > ip.txt
-
-      - name: Upload clean IP file
-        uses: actions/upload-artifact@v4
-        with:
-          name: ip-file
-          path: ip.txt
+          echo "提取的IP地址: $IP"
+          
+          # 直接通过环境变量传递，避免使用artifact
+          echo "IP_FOR_NEXT_JOB=$IP" >> $GITHUB_ENV
 
   trigger-remote-build:
     name: Trigger remote repository build
     needs: terraform
     runs-on: ubuntu-latest
     steps:
-      - name: Download IP file
-        uses: actions/download-artifact@v4
-        with:
-          name: ip-file
-
-      - name: Read and verify IP
+      - name: Read IP from previous job
         id: read-ip
         run: |
-          IP=$(cat ip_clean.txt | tr -d '[:space:]')
+          # 从needs上下文获取IP
+          IP="${{ needs.terraform.outputs.IP_ADDRESS }}"
           echo "读取到的IP: $IP"
-          
-          # 验证IP格式
-          if [[ ! $IP =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            echo "::error::无效的IP地址: $IP"
-            exit 1
-          fi
-          
           echo "ip_address=$IP" >> $GITHUB_OUTPUT
-
-      - name: Verify target workflow inputs
-        run: |
-          echo "将使用的参数:"
-          echo "VITE_SERVER_HOST: http://${{ steps.read-ip.outputs.ip_address }}"
-          echo "DOCKER_COMPOSE_FILE: ${{ github.event.inputs.compose-file-path }}"
           
       - name: Trigger remote workflow
         uses: benc-uk/workflow-dispatch@v1
         with:
-         script: |
-            try {
-              await github.rest.actions.createWorkflowDispatch({
-                owner: 'QiushiZhou',
-                repo: 'resumeAPI',
-                workflow_id: 'build-push.yml',
-                ref: 'main',
-                inputs: {
-                  // 使用目标工作流实际接受的参数名
-                  server_host: `http://${{ steps.read-ip.outputs.ip_address }}`,
-                  compose_file: `${{ github.event.inputs.compose-file-path }}`
-                }
-              })
-              console.log('工作流触发成功')
-            } catch (error) {
-              console.error('触发失败:', error)
-              // 获取目标工作流定义的输入参数
-              const workflow = await github.rest.actions.getWorkflow({
-                owner: 'QiushiZhou',
-                repo: 'resumeAPI',
-                workflow_id: 'build-push.yml'
-              })
-              console.log('目标工作流接受的输入参数:', workflow.data.inputs)
-              process.exit(1)
+          workflow: build-push.yml
+          repo: QiushiZhou/resumeAPI
+          token: ${{ secrets.PAT }}
+          ref: main
+          inputs: |
+            {
+              "server_host": "http://${{ steps.read-ip.outputs.ip_address }}",
+              "compose_file": "${{ github.event.inputs.compose-file-path }}"
             }
