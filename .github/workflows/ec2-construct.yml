@@ -76,10 +76,8 @@ jobs:
     needs: terraform
     runs-on: ubuntu-latest
     steps:
-      # ... (前面的步骤保持不变) ...
-
-      - name: Get target workflow inputs
-        id: get-inputs
+      - name: Verify workflow definition
+        id: verify-workflow
         env:
           PAT: ${{ secrets.PAT }}
         run: |
@@ -87,18 +85,23 @@ jobs:
             -H "Accept: application/vnd.github.v3+json" \
             https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml)
           
-          # 检查输入参数定义
-          INPUTS=$(echo "$RESPONSE" | jq -r '.on.workflow_dispatch.inputs | to_entries[] | "\(.key)"')
-          
-          if [ -z "$INPUTS" ]; then
-            echo "::error::目标工作流没有定义输入参数"
+          # 检查是否支持workflow_dispatch
+          if ! echo "$RESPONSE" | jq -e '.on.workflow_dispatch' > /dev/null; then
+            echo "::error::目标工作流不支持workflow_dispatch触发"
+            echo "工作流定义:"
             echo "$RESPONSE" | jq .
             exit 1
           fi
-          
-          echo "目标工作流接受的输入参数:"
-          echo "$INPUTS"
-          echo "INPUTS_JSON=$(echo "$RESPONSE" | jq -c '.on.workflow_dispatch.inputs')" >> $GITHUB_OUTPUT
+
+          # 检查输入参数
+          if ! echo "$RESPONSE" | jq -e '.on.workflow_dispatch.inputs' > /dev/null; then
+            echo "NO_INPUTS=true" >> $GITHUB_OUTPUT
+            echo "目标工作流没有定义输入参数"
+          else
+            echo "NO_INPUTS=false" >> $GITHUB_OUTPUT
+            echo "目标工作流输入参数:"
+            echo "$RESPONSE" | jq '.on.workflow_dispatch.inputs'
+          fi
 
       - name: Trigger remote workflow
         env:
@@ -107,20 +110,25 @@ jobs:
           IP=${{ steps.read-ip.outputs.final_ip }}
           COMPOSE_PATH="${{ github.event.inputs.compose-file-path }}"
           
-          # 从输入参数定义中获取正确的参数名
-          FIRST_INPUT=$(echo '${{ steps.get-inputs.outputs.INPUTS_JSON }}' | jq -r 'keys[0]')
-          SECOND_INPUT=$(echo '${{ steps.get-inputs.outputs.INPUTS_JSON }}' | jq -r 'keys[1]')
-          
-          echo "使用参数名: $FIRST_INPUT 和 $SECOND_INPUT"
-          
-          curl -X POST \
-            -H "Authorization: token $PAT" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml/dispatches \
-            -d '{
-              "ref": "main",
-              "inputs": {
-                "'"$FIRST_INPUT"'": "http://'"$IP"'",
-                "'"$SECOND_INPUT"'": "'"$COMPOSE_PATH"'"
-              }
-            }'
+          if [ "${{ steps.verify-workflow.outputs.NO_INPUTS }}" = "true" ]; then
+            echo "触发无输入参数的工作流"
+            curl -X POST \
+              -H "Authorization: token $PAT" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml/dispatches \
+              -d '{"ref": "main"}'
+          else
+            echo "触发带输入参数的工作流"
+            # 使用repository_dispatch作为备用方案
+            curl -X POST \
+              -H "Authorization: token $PAT" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://api.github.com/repos/QiushiZhou/resumeAPI/dispatches \
+              -d '{
+                "event_type": "trigger_deployment",
+                "client_payload": {
+                  "server_host": "http://'"$IP"'",
+                  "compose_file": "'"$COMPOSE_PATH"'"
+                }
+              }'
+          fi
