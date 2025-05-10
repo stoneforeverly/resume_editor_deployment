@@ -35,48 +35,12 @@ jobs:
         chmod 700 ~/.ssh
         
         # Write private key with proper formatting
-        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/temp_key
-        # Remove any Windows line endings
-        sed -i 's/\r$//' ~/.ssh/temp_key
-        # Remove any GitHub-added formatting
-        sed -i '/^\*\*\*/,/^\*\*\*/d' ~/.ssh/temp_key
-        # Remove any leading/trailing whitespace
-        sed -i 's/^[ \t]*//;s/[ \t]*$//' ~/.ssh/temp_key
-        
-        # Verify key content
-        echo "=== Key Content Start ==="
-        head -n 5 ~/.ssh/temp_key
-        echo "..."
-        tail -n 5 ~/.ssh/temp_key
-        echo "=== Key Content End ==="
-        
-        # Ensure key has proper BEGIN/END markers
-        if ! grep -q "BEGIN OPENSSH PRIVATE KEY" ~/.ssh/temp_key; then
-          echo "Adding missing OPENSSH header/footer"
-          echo "-----BEGIN OPENSSH PRIVATE KEY-----" > ~/.ssh/id_ed25519
-          cat ~/.ssh/temp_key >> ~/.ssh/id_ed25519
-          echo "-----END OPENSSH PRIVATE KEY-----" >> ~/.ssh/id_ed25519
-        else
-          mv ~/.ssh/temp_key ~/.ssh/id_ed25519
-        fi
-        
+        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
         chmod 600 ~/.ssh/id_ed25519
-        
-        # Verify key format
-        echo "=== Key Verification Attempt ==="
-        ssh-keygen -l -f ~/.ssh/id_ed25519 || echo "Key validation failed"
-        echo "=============================="
         
         # Start SSH agent
         eval $(ssh-agent -s)
-        
-        # Add key to agent
-        if ! ssh-add ~/.ssh/id_ed25519; then
-          echo "=== Debug: Key Content Hexdump ==="
-          hexdump -C ~/.ssh/id_ed25519 | head -n 20
-          echo "================================"
-          exit 1
-        fi
+        ssh-add ~/.ssh/id_ed25519
         
         # Configure known hosts
         ssh-keyscan -H ${{ env.EC2_IP }} >> ~/.ssh/known_hosts
@@ -84,13 +48,7 @@ jobs:
 
     - name: Deploy to EC2
       run: |
-        # Test connection
-        ssh -T -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} exit
-        
-        # Copy update script
-        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ 
-        
-        # Execute remote commands
+        # Prepare and execute remote commands
         ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
           # Install Docker if not exists
           if ! command -v docker &> /dev/null; then
@@ -98,19 +56,47 @@ jobs:
             sudo yum install -y docker
             sudo systemctl start docker
             sudo systemctl enable docker
-            sudo usermod -aG docker $USER
           fi
           
-          # Install AWS CLI if not exists
-          if ! command -v aws &> /dev/null; then
-            sudo yum install -y awscli
-          fi
-          
-          # Execute update script
-          export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          export AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
-          export AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          export AWS_REGION=${{ env.AWS_REGION }}
-          chmod +x ~/ec2_update.sh
-          ~/ec2_update.sh
+          # Add user to docker group and refresh permissions
+          sudo usermod -aG docker $USER
+          newgrp docker << INNER
+            # Install AWS CLI if not exists
+            if ! command -v aws &> /dev/null; then
+              sudo yum install -y awscli
+            fi
+            
+            # Login to ECR
+            aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+            
+            # Copy update script
+            cat > ~/ec2_update.sh << 'SCRIPT'
+              #!/bin/bash
+              # Stop and remove existing containers
+              docker stop editor-frontend editor-backend market-frontend market-backend || true
+              docker rm editor-frontend editor-backend market-frontend market-backend || true
+              
+              # Pull new images
+              docker pull $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/editor-frontend:latest
+              docker pull $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/editor-backend:latest
+              docker pull $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/market-frontend:latest
+              docker pull $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/market-backend:latest
+              
+              # Run containers
+              docker run -d --name editor-frontend -p 3000:3000 $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/editor-frontend:latest
+              docker run -d --name editor-backend -p 5000:5000 $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/editor-backend:latest
+              docker run -d --name market-frontend -p 3001:3000 $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/market-frontend:latest
+              docker run -d --name market-backend -p 5001:5000 $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/market-backend:latest
+            SCRIPT
+            chmod +x ~/ec2_update.sh
+            
+            # Execute update script with environment variables
+            export AWS_ACCOUNT_ID=$AWS_ACCOUNT_ID
+            export AWS_REGION=$AWS_REGION
+            export OPENAI_API_KEY=$OPENAI_API_KEY
+            ~/ec2_update.sh
+          INNER
         EOF
+      env:
+        AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
