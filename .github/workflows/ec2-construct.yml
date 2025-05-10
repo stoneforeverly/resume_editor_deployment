@@ -44,40 +44,50 @@ jobs:
         if: github.ref == 'refs/heads/main' 
         run: terraform apply -auto-approve 
 
-      - name: Get EC2 IP 
+      - name: Get and export EC2 IP 
         id: get-ip
         run: |
-          IP=$(terraform output -raw instance_public_ip | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+          IP=$(terraform output -raw instance_public_ip | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}')
           echo "IP_ADDRESS=$IP" >> $GITHUB_OUTPUT
+          echo "IP=$IP" >> $GITHUB_ENV
           echo "提取的IP地址: $IP"
+
+      - name: Upload IP as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ec2-ip
+          path: |
+            ${{ github.workspace }}/ec2/ip.txt
+          retention-days: 1
 
   trigger-remote-build:
     name: Trigger remote repository build
     needs: terraform
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Download IP artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ec2-ip
+          path: ./ip-data
 
-      - name: Get pure EC2 IP
-        id: get-ip
+      - name: Read IP address
+        id: read-ip
         run: |
-          IP=$(terraform output -raw instance_public_ip | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}')
-          echo "IP_ADDRESS=$IP" >> $GITHUB_OUTPUT
-          echo "提取的IP地址: $IP"
+          IP=$(cat ./ip-data/ip.txt | tr -d '[:space:]')
+          echo "final_ip=$IP" >> $GITHUB_OUTPUT
+          echo "读取到的IP地址: $IP"
 
-      - name: Trigger via workflow_call
+      - name: Trigger remote workflow
         uses: actions/github-script@v6
         env:
           PAT: ${{ secrets.PAT }}
         with:
           script: |
-            const { PAT } = process.env;
-            const ip = `${{ steps.get-ip.outputs.IP_ADDRESS }}`;
+            const ip = `${{ steps.read-ip.outputs.final_ip }}`;
             const composePath = `${{ github.event.inputs.compose-file-path }}`;
             
             try {
-              // 使用Reusable Workflow API触发
               await github.rest.actions.createWorkflowDispatch({
                 owner: 'QiushiZhou',
                 repo: 'resumeAPI',
@@ -88,12 +98,8 @@ jobs:
                   DOCKER_COMPOSE_FILE: composePath
                 }
               });
-              
               console.log(`成功触发工作流，IP: ${ip}`);
             } catch (error) {
               core.setFailed(`触发失败: ${error.message}`);
-              console.log('请检查:');
-              console.log('1. PAT是否有repo和workflow权限');
-              console.log('2. 目标分支是否正确(main/master)');
-              console.log('3. 错误详情:', error.response?.data || error);
+              console.log('错误详情:', error.response?.data || error);
             }
