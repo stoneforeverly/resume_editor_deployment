@@ -2,7 +2,6 @@ name: EC2 Deploy
 
 on:
   workflow_dispatch:
-# Define environment variables  
 env:  
   AWS_REGION: ap-southeast-2
   UPDATE_SCRIPT: .github/workflows/ec2_update.sh
@@ -35,34 +34,46 @@ jobs:
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
         
-        # Write private key with proper formatting
-        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-        # Remove any carriage returns and ensure proper line endings
-        sed -i 's/\r$//' ~/.ssh/id_rsa
-        # Ensure key has proper BEGIN/END markers
-        if ! grep -q "BEGIN RSA PRIVATE KEY" ~/.ssh/id_rsa; then
-          echo "-----BEGIN RSA PRIVATE KEY-----" > ~/.ssh/id_rsa.tmp
-          cat ~/.ssh/id_rsa >> ~/.ssh/id_rsa.tmp
-          echo "-----END RSA PRIVATE KEY-----" >> ~/.ssh/id_rsa.tmp
-          mv ~/.ssh/id_rsa.tmp ~/.ssh/id_rsa
-        fi
-        chmod 600 ~/.ssh/id_rsa
+        # Write private key with multi-line handling
+        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" | while read -r line; do
+          # Skip empty lines and GitHub's potential formatting
+          if [[ -n "$line" && ! "$line" =~ ^\*\*\* ]]; then
+            echo "$line" >> ~/.ssh/temp_key
+          fi
+        done
         
-        # Verify key format
-        echo "=== Key Content ==="
-        head -n 3 ~/.ssh/id_rsa
-        echo "..."
-        tail -n 3 ~/.ssh/id_rsa
-        echo "=================="
+        # Detect key type and format appropriately
+        if grep -q "BEGIN OPENSSH PRIVATE KEY" ~/.ssh/temp_key; then
+          echo "Detected OpenSSH format key"
+          mv ~/.ssh/temp_key ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          KEY_FILE=~/.ssh/id_ed25519
+        elif grep -q "BEGIN RSA PRIVATE KEY" ~/.ssh/temp_key; then
+          echo "Detected RSA format key"
+          mv ~/.ssh/temp_key ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          KEY_FILE=~/.ssh/id_rsa
+        else
+          echo "=== ERROR: Unknown key format ==="
+          cat ~/.ssh/temp_key
+          echo "==============================="
+          exit 1
+        fi
+        
+        # Verify key
+        echo "=== Key Info ==="
+        file $KEY_FILE
+        ssh-keygen -l -f $KEY_FILE || echo "Key verification failed"
+        echo "================"
         
         # Start SSH agent
         eval $(ssh-agent -s)
         
-        # Add key to agent
-        if ! ssh-add ~/.ssh/id_rsa; then
-          echo "=== SSH-ADD DEBUG ==="
-          ssh-keygen -l -f ~/.ssh/id_rsa || echo "Key validation failed"
-          echo "===================="
+        # Add key
+        if ! ssh-add $KEY_FILE; then
+          echo "=== SSH Debug ==="
+          ssh-add -vvv $KEY_FILE || true
+          echo "================"
           exit 1
         fi
         
@@ -70,20 +81,13 @@ jobs:
         ssh-keyscan -H ${{ env.EC2_IP }} >> ~/.ssh/known_hosts
         chmod 600 ~/.ssh/known_hosts
         
-        # Test SSH connection
-        if ! ssh -T -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} exit; then
-          echo "=== SSH DEBUG ==="
-          ssh -T -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} exit || true
-          echo "================"
-          exit 1
-        fi
+        # Test connection
+        ssh -T -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} exit
         
-        # Copy update script
-        scp -o StrictHostKeyChecking=no -r ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:/home/${{ env.SSH_USER }}/
-        
-        # Execute remote commands
+        # Deploy
+        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ 
         ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
           export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          chmod +x /home/${{ env.SSH_USER }}/ec2_update.sh
-          /home/${{ env.SSH_USER }}/ec2_update.sh
+          chmod +x ~/ec2_update.sh
+          ~/ec2_update.sh
         EOF
