@@ -59,61 +59,41 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify target workflow
-        id: verify-workflow
+      - name: Get pure EC2 IP
+        id: get-ip
+        run: |
+          IP=$(terraform output -raw instance_public_ip | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}')
+          echo "IP_ADDRESS=$IP" >> $GITHUB_OUTPUT
+          echo "提取的IP地址: $IP"
+
+      - name: Trigger via workflow_call
+        uses: actions/github-script@v6
         env:
           PAT: ${{ secrets.PAT }}
-        run: |
-          # 获取工作流定义
-          RESPONSE=$(curl -s -H "Authorization: token $PAT" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml)
-          
-          # 检查是否包含workflow_dispatch
-          if ! echo "$RESPONSE" | jq -e '.on.workflow_dispatch' > /dev/null; then
-            echo "::error::目标工作流不支持workflow_dispatch触发"
-            echo "工作流定义:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-          # 检查输入参数
-          INPUTS=$(echo "$RESPONSE" | jq -r '.on.workflow_dispatch.inputs // empty')
-          if [ -z "$INPUTS" ]; then
-            echo "目标工作流没有定义输入参数"
-            echo "NO_INPUTS=true" >> $GITHUB_OUTPUT
-          else
-            echo "目标工作流输入参数:"
-            echo "$INPUTS" | jq .
-            echo "NO_INPUTS=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Trigger workflow
-        env:
-          PAT: ${{ secrets.PAT }}
-        run: |
-          IP=${{ needs.terraform.outputs.IP_ADDRESS }}
-          COMPOSE_PATH="${{ github.event.inputs.compose-file-path }}"
-
-          # 根据是否有输入参数决定触发方式
-          if [ "${{ steps.verify-workflow.outputs.NO_INPUTS }}" = "true" ]; then
-            echo "触发无输入参数的工作流"
-            curl -X POST \
-              -H "Authorization: token $PAT" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml/dispatches \
-              -d '{"ref": "main"}'
-          else
-            echo "触发带输入参数的工作流"
-            curl -X POST \
-              -H "Authorization: token $PAT" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml/dispatches \
-              -d '{
-                "ref": "main",
-                "inputs": {
-                  "VITE_SERVER_HOST": "http://'"$IP"'",
-                  "DOCKER_COMPOSE_FILE": "'"$COMPOSE_PATH"'"
+        with:
+          script: |
+            const { PAT } = process.env;
+            const ip = `${{ steps.get-ip.outputs.IP_ADDRESS }}`;
+            const composePath = `${{ github.event.inputs.compose-file-path }}`;
+            
+            try {
+              // 使用Reusable Workflow API触发
+              await github.rest.actions.createWorkflowDispatch({
+                owner: 'QiushiZhou',
+                repo: 'resumeAPI',
+                workflow_id: 'build-push.yml',
+                ref: 'main',
+                inputs: {
+                  VITE_SERVER_HOST: `http://${ip}`,
+                  DOCKER_COMPOSE_FILE: composePath
                 }
-              }'
-          fi
+              });
+              
+              console.log(`成功触发工作流，IP: ${ip}`);
+            } catch (error) {
+              core.setFailed(`触发失败: ${error.message}`);
+              console.log('请检查:');
+              console.log('1. PAT是否有repo和workflow权限');
+              console.log('2. 目标分支是否正确(main/master)');
+              console.log('3. 错误详情:', error.response?.data || error);
+            }
