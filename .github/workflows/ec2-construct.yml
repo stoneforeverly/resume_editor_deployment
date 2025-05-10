@@ -79,41 +79,41 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read IP from file
+      - name: Verify IP file exists
+        id: check-ip-file
+        run: |
+          if [ ! -f "ip_data/ip.txt" ]; then
+            echo "::error::IP文件不存在: ip_data/ip.txt"
+            echo "当前目录内容:"
+            ls -R
+            exit 1
+          fi
+          echo "IP文件存在"
+
+      - name: Read and validate IP
         id: read-ip
         run: |
+          echo "当前工作目录: $(pwd)"
+          echo "尝试读取IP文件..."
+          
           IP=$(cat ip_data/ip.txt | tr -d '[:space:]')
+          if [[ -z "$IP" ]]; then
+            echo "::error::IP文件为空"
+            exit 1
+          fi
+          
           if [[ ! $IP =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
             echo "::error::无效的IP地址格式: $IP"
             exit 1
           fi
+          
           echo "final_ip=$IP" >> $GITHUB_OUTPUT
           echo "验证通过的IP地址: $IP"
 
-      - name: Get target workflow metadata
-        id: get-metadata
-        env:
-          PAT: ${{ secrets.PAT }}
+      - name: Debug outputs
         run: |
-          # 获取工作流文件原始内容
-          WORKFLOW_CONTENT=$(curl -s -H "Authorization: token $PAT" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/QiushiZhou/resumeAPI/contents/.github/workflows/build-push.yml | jq -r .content | base64 -d)
-          
-          echo "目标工作流文件内容:"
-          echo "$WORKFLOW_CONTENT"
-          
-          # 提取实际参数名
-          if echo "$WORKFLOW_CONTENT" | grep -q "workflow_dispatch"; then
-            echo "工作流支持workflow_dispatch"
-            INPUT1=$(echo "$WORKFLOW_CONTENT" | grep -A1 "workflow_dispatch:" -A10 | grep -m1 -oP '(?<=^\s{2,4})\w+(?=:\s*$)' | head -1)
-            INPUT2=$(echo "$WORKFLOW_CONTENT" | grep -A1 "workflow_dispatch:" -A10 | grep -m1 -oP '(?<=^\s{2,4})\w+(?=:\s*$)' | tail -1)
-            echo "INPUT1_NAME=$INPUT1" >> $GITHUB_OUTPUT
-            echo "INPUT2_NAME=$INPUT2" >> $GITHUB_OUTPUT
-          else
-            echo "工作流不支持workflow_dispatch，将使用repository_dispatch"
-            echo "USE_REPOSITORY_DISPATCH=true" >> $GITHUB_OUTPUT
-          fi
+          echo "最终IP值: ${{ steps.read-ip.outputs.final_ip }}"
+          echo "Compose路径: ${{ github.event.inputs.compose-file-path }}"
 
       - name: Trigger workflow
         env:
@@ -122,33 +122,18 @@ jobs:
           IP=${{ steps.read-ip.outputs.final_ip }}
           COMPOSE_PATH="${{ github.event.inputs.compose-file-path }}"
           
-          if [ "${{ steps.get-metadata.outputs.USE_REPOSITORY_DISPATCH }}" = "true" ]; then
-            echo "使用repository_dispatch触发"
-            curl -X POST \
-              -H "Authorization: token $PAT" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/QiushiZhou/resumeAPI/dispatches \
-              -d '{
-                "event_type": "trigger_deployment",
-                "client_payload": {
-                  "server_host": "http://'"$IP"'",
-                  "compose_file": "'"$COMPOSE_PATH"'"
-                }
-              }'
-          else
-            echo "使用workflow_dispatch触发"
-            echo "参数1: ${{ steps.get-metadata.outputs.INPUT1_NAME }}"
-            echo "参数2: ${{ steps.get-metadata.outputs.INPUT2_NAME }}"
-            
-            curl -X POST \
-              -H "Authorization: token $PAT" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml/dispatches \
-              -d '{
-                "ref": "main",
-                "inputs": {
-                  "'"${{ steps.get-metadata.outputs.INPUT1_NAME }}"'": "http://'"$IP"'",
-                  "'"${{ steps.get-metadata.outputs.INPUT2_NAME }}"'": "'"$COMPOSE_PATH"'"
-                }
-              }'
-          fi
+          echo "触发参数:"
+          echo "IP: http://$IP"
+          echo "Compose路径: $COMPOSE_PATH"
+          
+          curl -X POST \
+            -H "Authorization: token $PAT" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml/dispatches \
+            -d '{
+              "ref": "main",
+              "inputs": {
+                "server_host": "http://'"$IP"'",
+                "docker_compose_path": "'"$COMPOSE_PATH"'"
+              }
+            }'
