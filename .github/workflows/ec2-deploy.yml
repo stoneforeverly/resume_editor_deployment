@@ -2,12 +2,11 @@ name: EC2 Deploy
 
 on:
   workflow_dispatch:
-# Define environment variables  
-env:  
+env:
   AWS_REGION: ap-southeast-2
   UPDATE_SCRIPT: .github/workflows/ec2_update.sh
   EC2_IP: 54.252.219.100
-
+  SSH_USER: ec2-user
 
 jobs:
   deploy:
@@ -25,21 +24,56 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    - name: Create Private Key File
+    - name: Setup SSH Connection
+      id: ssh-setup
       run: |
-        which ssh-agent || ( apt-get update -y && apt-get install openssh-client git -y )
-        eval $(ssh-agent -s)
+        # Install dependencies
+        sudo apt-get update -y
+        sudo apt-get install -y openssh-client git jq
+        
+        # Setup SSH directory
         mkdir -p ~/.ssh
-        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_ed
-        chmod 600 ~/.ssh/id_ed
-        ssh-add ~/.ssh/id_ed
-        touch ~/.ssh/config
-        touch ~/.ssh/known_hosts
+        chmod 700 ~/.ssh
+        
+        # Write private key with proper formatting
+        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/temp_key
+        # Remove Windows line endings and GitHub formatting
+        sed -i 's/\r$//' ~/.ssh/temp_key
+        sed -i '/^\*\*\*/,/^\*\*\*/d' ~/.ssh/temp_key
+        
+        # Reconstruct key with proper headers
+        {
+          echo "-----BEGIN OPENSSH PRIVATE KEY-----"
+          grep -v 'PRIVATE KEY' ~/.ssh/temp_key | tr -d '\r'
+          echo "-----END OPENSSH PRIVATE KEY-----"
+        } > ~/.ssh/id_ed25519
+        
+        chmod 600 ~/.ssh/id_ed25519
+        
+        # Verify key
+        echo "=== Key Verification ==="
+        ssh-keygen -l -f ~/.ssh/id_ed25519 || (echo "Key validation failed" && exit 1)
+        
+        # Start SSH agent
+        eval $(ssh-agent -s)
+        ssh-add ~/.ssh/id_ed25519 || (echo "Failed to add key to agent" && exit 1)
+        
+        # Configure known hosts
+        ssh-keyscan -H ${{ env.EC2_IP }} > ~/.ssh/known_hosts
         chmod 600 ~/.ssh/known_hosts
-        ssh-keyscan 3.107.160.80 >> ~/.ssh/known_hosts
-        scp -o StrictHostKeyChecking=no -r ${{ env.UPDATE_SCRIPT }} ec2-user@54.252.219.100:/home/ec2-user/
-        ssh -o StrictHostKeyChecking=no ec2-user@54.252.219.100 << 'EOF'
-          export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          chmod +x /home/ec2-user/ec2_update.sh
-          /home/ec2-user/ec2_update.sh
+
+    - name: Deploy Application
+      if: steps.ssh-setup.outcome == 'success'
+      run: |
+        # Copy update script
+        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ec2_update.sh
+        
+        # Execute remote commands
+        ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
+          set -e
+          export OPENAI_API_KEY=$OPENAI_API_KEY
+          chmod +x ~/ec2_update.sh
+          sudo ~/ec2_update.sh
         EOF
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
