@@ -59,51 +59,61 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Get target workflow inputs
-        id: get-inputs
+      - name: Verify target workflow
+        id: verify-workflow
         env:
           PAT: ${{ secrets.PAT }}
         run: |
-          # 获取目标工作流定义
+          # 获取工作流定义
           RESPONSE=$(curl -s -H "Authorization: token $PAT" \
             -H "Accept: application/vnd.github.v3+json" \
             https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml)
           
-          # 提取输入参数定义
-          INPUTS=$(echo "$RESPONSE" | jq -r '.on.workflow_dispatch.inputs | to_entries | map("\(.key): \(.value.description)") | join("\n")')
-          
-          if [ -z "$INPUTS" ]; then
-            echo "::error::目标工作流没有定义输入参数"
+          # 检查是否包含workflow_dispatch
+          if ! echo "$RESPONSE" | jq -e '.on.workflow_dispatch' > /dev/null; then
+            echo "::error::目标工作流不支持workflow_dispatch触发"
+            echo "工作流定义:"
             echo "$RESPONSE" | jq .
             exit 1
           fi
-          
-          echo "目标工作流接受的输入参数:"
-          echo "$INPUTS"
-          echo "inputs_list=$INPUTS" >> $GITHUB_OUTPUT
 
-      - name: Trigger with correct inputs
+          # 检查输入参数
+          INPUTS=$(echo "$RESPONSE" | jq -r '.on.workflow_dispatch.inputs // empty')
+          if [ -z "$INPUTS" ]; then
+            echo "目标工作流没有定义输入参数"
+            echo "NO_INPUTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "目标工作流输入参数:"
+            echo "$INPUTS" | jq .
+            echo "NO_INPUTS=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Trigger workflow
         env:
           PAT: ${{ secrets.PAT }}
         run: |
-          # 根据目标工作流定义调整参数名
-          # 这里假设目标工作流接受 VITE_SERVER_HOST 和 DOCKER_COMPOSE_FILE
-          # 请根据上一步的输出调整
-          IP="${{ needs.terraform.outputs.IP_ADDRESS }}"
+          IP=${{ needs.terraform.outputs.IP_ADDRESS }}
           COMPOSE_PATH="${{ github.event.inputs.compose-file-path }}"
 
-          echo "使用参数:"
-          echo "VITE_SERVER_HOST: http://$IP"
-          echo "DOCKER_COMPOSE_FILE: $COMPOSE_PATH"
-
-          curl -X POST \
-            -H "Authorization: token $PAT" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml/dispatches \
-            -d '{
-              "ref": "main",
-              "inputs": {
-                "VITE_SERVER_HOST": "http://'"$IP"'",
-                "DOCKER_COMPOSE_FILE": "'"$COMPOSE_PATH"'"
-              }
-            }'
+          # 根据是否有输入参数决定触发方式
+          if [ "${{ steps.verify-workflow.outputs.NO_INPUTS }}" = "true" ]; then
+            echo "触发无输入参数的工作流"
+            curl -X POST \
+              -H "Authorization: token $PAT" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml/dispatches \
+              -d '{"ref": "main"}'
+          else
+            echo "触发带输入参数的工作流"
+            curl -X POST \
+              -H "Authorization: token $PAT" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml/dispatches \
+              -d '{
+                "ref": "main",
+                "inputs": {
+                  "VITE_SERVER_HOST": "http://'"$IP"'",
+                  "DOCKER_COMPOSE_FILE": "'"$COMPOSE_PATH"'"
+                }
+              }'
+          fi
