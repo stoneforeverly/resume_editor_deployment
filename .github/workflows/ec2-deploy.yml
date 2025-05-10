@@ -34,36 +34,54 @@ jobs:
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
         
-        # Write private key with base64 decoding (recommended for GitHub Secrets)
-        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" | base64 -d > ~/.ssh/id_ed25519
-        chmod 600 ~/.ssh/id_ed25519
+        # Write private key with proper formatting
+        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/temp_key
+        # Remove any Windows line endings
+        sed -i 's/\r$//' ~/.ssh/temp_key
+        # Remove any GitHub-added formatting
+        sed -i '/^\*\*\*/,/^\*\*\*/d' ~/.ssh/temp_key
+        # Remove leading/trailing whitespace
+        sed -i 's/^[ \t]*//;s/[ \t]*$//' ~/.ssh/temp_key
+        
+        # Verify key content
+        echo "=== Key Content Start ==="
+        head -n 5 ~/.ssh/temp_key
+        echo "..."
+        tail -n 5 ~/.ssh/temp_key
+        echo "=== Key Content End ==="
+        
+        # Ensure key has proper BEGIN/END markers
+        if grep -q "BEGIN OPENSSH PRIVATE KEY" ~/.ssh/temp_key; then
+          echo "Detected OpenSSH format key"
+          mv ~/.ssh/temp_key ~/.ssh/id_ed25519
+        elif grep -q "BEGIN RSA PRIVATE KEY" ~/.ssh/temp_key; then
+          echo "Detected RSA format key"
+          mv ~/.ssh/temp_key ~/.ssh/id_rsa
+        else
+          echo "=== ERROR: Unknown key format ==="
+          cat ~/.ssh/temp_key
+          echo "==============================="
+          exit 1
+        fi
+        
+        chmod 600 ~/.ssh/id_ed25519 || chmod 600 ~/.ssh/id_rsa
         
         # Verify key format
         echo "=== Key Verification ==="
-        ssh-keygen -l -f ~/.ssh/id_ed25519 || (echo "Key validation failed" && exit 1)
+        KEY_FILE=$(ls ~/.ssh/id_ed25519 ~/.ssh/id_rsa 2>/dev/null | head -n1)
+        ssh-keygen -l -f $KEY_FILE || (echo "Key validation failed" && exit 1)
         echo "======================"
         
         # Start SSH agent
         eval $(ssh-agent -s)
         
-        # Add key to agent with retry
-        for i in {1..3}; do
-          if ssh-add ~/.ssh/id_ed25519; then
-            echo "Key added successfully"
-            break
-          else
-            echo "Failed to add key (attempt $i/3)"
-            if [ $i -eq 3 ]; then
-              echo "=== Debug: Key Content ==="
-              head -n 5 ~/.ssh/id_ed25519
-              echo "..."
-              tail -n 5 ~/.ssh/id_ed25519
-              echo "========================"
-              exit 1
-            fi
-            sleep 2
-          fi
-        done
+        # Add key to agent
+        if ! ssh-add $KEY_FILE; then
+          echo "=== Debug: Key Content Hexdump ==="
+          hexdump -C $KEY_FILE | head -n 20
+          echo "================================"
+          exit 1
+        fi
         
         # Configure known hosts
         ssh-keyscan -H ${{ env.EC2_IP }} >> ~/.ssh/known_hosts
@@ -71,14 +89,17 @@ jobs:
 
     - name: Deploy to EC2
       run: |
+        # Determine key file
+        KEY_FILE=$(ls ~/.ssh/id_ed25519 ~/.ssh/id_rsa 2>/dev/null | head -n1)
+        
         # Test connection
-        ssh -T -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} exit
+        ssh -i $KEY_FILE -T -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} exit
         
         # Copy update script
-        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ 
+        scp -i $KEY_FILE -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ 
         
-        # Execute remote commands with proper Docker permissions
-        ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
+        # Execute remote commands
+        ssh -i $KEY_FILE -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
           # Install Docker if not exists
           if ! command -v docker &> /dev/null; then
             sudo yum update -y
@@ -94,13 +115,13 @@ jobs:
             sudo yum install -y awscli
           fi
           
-          # Execute update script with sudo
+          # Execute update script
           export OPENAI_API_KEY=$OPENAI_API_KEY
           export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
           export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
           export AWS_REGION=$AWS_REGION
           chmod +x ~/ec2_update.sh
-          sudo -E ~/ec2_update.sh
+          ~/ec2_update.sh
         EOF
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
