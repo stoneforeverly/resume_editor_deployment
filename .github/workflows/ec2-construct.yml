@@ -77,5 +77,6 @@ jobs:
           ref: main # 目标分支
           inputs: |
             {
-              "VITE_SERVER_HOST": "http://${{ steps.ip.outputs.IP_ADDRESS }}"
+              "vite_server_host": "http://${{ steps.ip.outputs.IP_ADDRESS }}",
+              "docker_compose_file": "${{ github.event.inputs.compose-file-path }}"  
             }
