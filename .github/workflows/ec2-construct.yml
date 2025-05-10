@@ -46,10 +46,9 @@ jobs:
 
       - name: Get EC2 IP 
         run: |
-          terraform output -raw instance_public_ip > ip.txt
-          echo "===== IP 文件内容 ====="
-          cat ip.txt  # 调试输出
-          echo "======================="
+          IP=$(terraform output -raw instance_public_ip | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}') # 用正则提取纯IP
+          echo "IP_ADDRESS=$IP" >> $GITHUB_OUTPUT
+          echo "Extracted IP: $IP" # 验证输出
 
   trigger-remote-build:
     name: Trigger remote repository build
