@@ -24,79 +24,82 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    - name: Setup SSH Connection (Atomic Method)
+    - name: Setup SSH Connection
       id: ssh-setup
       run: |
         # Install dependencies
         sudo apt-get update -y
         sudo apt-get install -y openssh-client git
         
-        # Atomic key reconstruction
+        # Create SSH directory
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
         
-        # 使用多行EOF语法确保格式完整
-        cat << 'EOF' > ~/.ssh/id_ed25519
-        -----BEGIN OPENSSH PRIVATE KEY-----
-        ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-        -----END OPENSSH PRIVATE KEY-----
-        EOF
+        # Write the private key with proper formatting
+        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
         
-        # 严格处理密钥文件
+        # Clean up the key file
         sed -i '/^-----BEGIN OPENSSH PRIVATE KEY-----$/,/^-----END OPENSSH PRIVATE KEY-----$/!d' ~/.ssh/id_ed25519
         sed -i '/^$/d' ~/.ssh/id_ed25519
         chmod 600 ~/.ssh/id_ed25519
         
-        # 二进制验证
-        echo "=== Key Binary Verification ==="
-        file ~/.ssh/id_ed25519
-        head -c 100 ~/.ssh/id_ed25519 | xxd
-        tail -c 100 ~/.ssh/id_ed25519 | xxd
-        
-        # 严格验证
-        if ! ssh-keygen -lf ~/.ssh/id_ed25519; then
+        # Verify key format
+        echo "=== Key Verification ==="
+        if ! ssh-keygen -l -f ~/.ssh/id_ed25519 >/dev/null 2>&1; then
           echo "::error::Invalid SSH Key Format"
+          echo "Key content:"
+          cat ~/.ssh/id_ed25519
           exit 1
         fi
         
-        # 配置SSH
+        # Setup SSH agent
         eval $(ssh-agent -s)
         if ! ssh-add ~/.ssh/id_ed25519; then
           echo "::error::Failed to add SSH key"
-          ssh-add -vvv ~/.ssh/id_ed25519
           exit 1
         fi
         
-        ssh-keyscan -H ${{ env.EC2_IP }} > ~/.ssh/known_hosts
+        # Add EC2 to known hosts
+        ssh-keyscan -H ${{ env.EC2_IP }} >> ~/.ssh/known_hosts
         chmod 600 ~/.ssh/known_hosts
 
-    - name: Deploy (With Fallback)
+    - name: Deploy to EC2
       if: steps.ssh-setup.outcome == 'success'
       run: |
-        # 带重试机制的部署
+        # Transfer update script with retry
         max_retries=3
         for i in $(seq 1 $max_retries); do
-          scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ && break || {
+          if scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/; then
+            break
+          else
             echo "Attempt $i failed, retrying..."
             sleep 5
-            [ $i -eq $max_retries ] && exit 1
-          }
+            if [ $i -eq $max_retries ]; then
+              echo "::error::Failed to transfer script after $max_retries attempts"
+              exit 1
+            fi
+          fi
         done
         
+        # Execute remote commands
         ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'DEPLOY_EOF'
           set -ex
           export OPENAI_API_KEY=$OPENAI_API_KEY
           chmod +x ~/ec2_update.sh
           
-          # Docker权限处理
-          if ! sudo docker info &>/dev/null; then
-            sudo yum install -y docker || true
+          # Ensure Docker is available
+          if ! command -v docker &>/dev/null; then
+            sudo yum install -y docker
             sudo systemctl start docker
             sudo usermod -aG docker $USER
-            # 临时权限修复
-            sudo chmod 666 /var/run/docker.sock
           fi
           
+          # Temporary permission fix if needed
+          if [ ! -w /var/run/docker.sock ]; then
+            sudo chmod 666 /var/run/docker.sock || true
+          fi
+          
+          # Execute update script
           sudo ~/ec2_update.sh
         DEPLOY_EOF
       env:
