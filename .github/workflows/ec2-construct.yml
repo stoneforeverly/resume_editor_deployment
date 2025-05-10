@@ -103,7 +103,7 @@ jobs:
         - name: Verify trigger result
           uses: actions/github-script@v6
           env:
-            PAT: ${{ secrets.PAT_WITH_WORKFLOW_ACCESS }}
+            PAT: ${{ secrets.PAT }}
           with:
             script: |
               try {
