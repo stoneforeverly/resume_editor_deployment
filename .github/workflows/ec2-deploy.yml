@@ -5,7 +5,7 @@ on:
 env:
   AWS_REGION: ap-southeast-2
   UPDATE_SCRIPT: .github/workflows/ec2_update.sh
-  EC2_IP: 54.252.183.163  # 更新为最新实例IP
+  EC2_IP: 54.252.183.163
   SSH_USER: ec2-user
 
 jobs:
@@ -25,7 +25,6 @@ jobs:
         aws-region: ${{ env.AWS_REGION }}
 
     - name: Setup SSH Connection
-      id: ssh-setup
       run: |
         # Install dependencies
         sudo apt-get update -y
@@ -35,64 +34,54 @@ jobs:
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
         
-        # Write private key with proper formatting
-        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+        # Write private key with exact formatting
+        cat << 'EOF' > ~/.ssh/id_ed25519
+        ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        EOF
+        
+        # Process key file
+        sed -i '/^-----BEGIN OPENSSH PRIVATE KEY-----$/,/^-----END OPENSSH PRIVATE KEY-----$/!d' ~/.ssh/id_ed25519
+        sed -i '/^$/d' ~/.ssh/id_ed25519
         chmod 600 ~/.ssh/id_ed25519
         
         # Verify key
-        echo "=== Key Info ==="
-        ssh-keygen -l -f ~/.ssh/id_ed25519 || exit 1
+        echo "=== Key Content ==="
+        head -n 3 ~/.ssh/id_ed25519
+        echo "..."
+        tail -n 3 ~/.ssh/id_ed25519
+        echo "=================="
+        
+        if ! ssh-keygen -l -f ~/.ssh/id_ed25519; then
+          echo "=== HEX DUMP ==="
+          hexdump -C ~/.ssh/id_ed25519 | head -n 10
+          echo "==============="
+          exit 1
+        fi
         
         # Start SSH agent
         eval $(ssh-agent -s)
-        ssh-add ~/.ssh/id_ed25519 || exit 1
+        if ! ssh-add ~/.ssh/id_ed25519; then
+          echo "=== SSH-ADD DEBUG ==="
+          ssh-add -vvv ~/.ssh/id_ed25519
+          exit 1
+        fi
         
-        # Configure known hosts with new IP
-        ssh-keyscan -H ${{ env.EC2_IP }} >> ~/.ssh/known_hosts
+        # Configure known hosts
+        ssh-keyscan -H ${{ env.EC2_IP }} > ~/.ssh/known_hosts
         chmod 600 ~/.ssh/known_hosts
-        
-        # Test connection to new instance
-        ssh -T -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} exit || exit 1
 
-    - name: Debug Connection
-      if: steps.ssh-setup.outcome == 'success'
+    - name: Test Connection
       run: |
-        echo "=== Testing New Instance Access ==="
-        ssh -T -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
-          echo "Instance IP: $(hostname -I)"
-          echo "Current user: $(whoami)"
-          echo "User groups: $(groups)"
+        ssh -T -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
+          echo "Connection successful!"
           echo "Docker status: $(sudo systemctl is-active docker)"
-          echo "Docker socket permissions:"
-          ls -l /var/run/docker.sock
         EOF
 
-    - name: Deploy to New EC2
-      if: steps.ssh-setup.outcome == 'success'
+    - name: Deploy
       run: |
-        # Copy update script to new instance
-        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ || exit 1
-        
-        # Execute deployment on new instance
+        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/
         ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
-          set -e
-          
-          # Ensure Docker is running
-          if ! systemctl is-active --quiet docker; then
-            sudo systemctl start docker
-          fi
-          
-          # Execute with proper permissions
-          exec sg docker -c "bash -c \"
-            export OPENAI_API_KEY=$OPENAI_API_KEY
-            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-            export AWS_REGION=$AWS_REGION
-            chmod +x ~/ec2_update.sh
-            ~/ec2_update.sh
-          \""
+          set -ex
+          chmod +x ~/ec2_update.sh
+          sudo ~/ec2_update.sh
         EOF
-      env:
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
