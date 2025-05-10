@@ -73,23 +73,11 @@ jobs:
     needs: terraform
     runs-on: ubuntu-latest
     steps:
-      - name: Download IP data
-        uses: actions/download-artifact@v4
-        with:
-          name: ip-data
-          path: ip_data
+      # ... (前面的下载IP步骤保持不变) ...
 
-      - name: Read IP address
-        id: read-ip
-        run: |
-          IP=$(cat ip_data/ip.txt | tr -d '[:space:]')
-          echo "final_ip=${IP}" >> ${GITHUB_OUTPUT}
-          echo "验证通过的IP地址: ${IP}"
-
-      - name: Trigger remote workflow (with PAT)
+      - name: Trigger remote workflow
         uses: actions/github-script@v6
         env:
-          # 使用具有足够权限的PAT
           PAT: ${{ secrets.PAT }}
         with:
           script: |
@@ -98,12 +86,11 @@ jobs:
             const composePath = `${{ github.event.inputs.compose-file-path }}`;
             
             try {
-              // 正确初始化octokit
-              const { Octokit } = require("@octokit/rest");
-              const octokit = new Octokit({ auth: PAT });
+              // 使用内置的github对象而不是Octokit
+              console.log('准备触发远程工作流...');
               
-              // 1. 首先获取目标工作流定义
-              const workflow = await octokit.rest.actions.getWorkflow({
+              // 1. 首先检查工作流是否存在
+              const workflow = await github.rest.actions.getWorkflow({
                 owner: 'QiushiZhou',
                 repo: 'resumeAPI',
                 workflow_id: 'build-push.yml'
@@ -111,8 +98,8 @@ jobs:
               
               console.log('目标工作流输入参数:', workflow.data.inputs);
               
-              // 2. 根据实际参数名触发
-              const response = await octokit.rest.actions.createWorkflowDispatch({
+              // 2. 使用内置的github对象触发工作流
+              const response = await github.rest.actions.createWorkflowDispatch({
                 owner: 'QiushiZhou',
                 repo: 'resumeAPI',
                 workflow_id: 'build-push.yml',
@@ -125,12 +112,13 @@ jobs:
               });
               
               console.log(`成功触发工作流，状态码: ${response.status}`);
-              console.log(`IP地址: ${ip}`);
+              console.log(`使用的IP地址: ${ip}`);
             } catch (error) {
               core.setFailed(`触发失败: ${error.message}`);
-              console.log('详细错误信息:', error);
+              console.log('详细错误信息:', error.response?.data || error);
               console.log('建议检查:');
               console.log('1. PAT是否有repo和workflow权限');
               console.log('2. 目标工作流是否存在且参数名匹配');
               console.log('3. 目标仓库是否可访问');
+              console.log('4. 输入参数:', { host: `http://${ip}`, compose_file: composePath });
             }
