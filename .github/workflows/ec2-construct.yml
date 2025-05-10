@@ -103,32 +103,40 @@ jobs:
             echo "$RESPONSE" | jq '.on.workflow_dispatch.inputs'
           fi
 
-      - name: Trigger remote workflow
+      - name: Trigger remote workflow (强制模式)
         env:
           PAT: ${{ secrets.PAT }}
         run: |
           IP=${{ steps.read-ip.outputs.final_ip }}
           COMPOSE_PATH="${{ github.event.inputs.compose-file-path }}"
-          
-          if [ "${{ steps.verify-workflow.outputs.NO_INPUTS }}" = "true" ]; then
-            echo "触发无输入参数的工作流"
-            curl -X POST \
-              -H "Authorization: token $PAT" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml/dispatches \
-              -d '{"ref": "main"}'
-          else
-            echo "触发带输入参数的工作流"
-            # 使用repository_dispatch作为备用方案
-            curl -X POST \
-              -H "Authorization: token $PAT" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/QiushiZhou/resumeAPI/dispatches \
-              -d '{
-                "event_type": "trigger_deployment",
-                "client_payload": {
-                  "server_host": "http://'"$IP"'",
-                  "compose_file": "'"$COMPOSE_PATH"'"
-                }
-              }'
-          fi
+
+          echo "强制触发工作流，使用参数:"
+          echo "VITE_SERVER_HOST: http://$IP"
+          echo "DOCKER_COMPOSE_FILE: $COMPOSE_PATH"
+
+          # 尝试直接触发（忽略API返回的工作流定义）
+          curl -X POST \
+            -H "Authorization: token $PAT" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml/dispatches \
+            -d '{
+              "ref": "main",
+              "inputs": {
+                "VITE_SERVER_HOST": "http://'"$IP"'",
+                "DOCKER_COMPOSE_FILE": "'"$COMPOSE_PATH"'"
+              }
+            }' || echo "触发请求已发送，忽略API响应错误"
+
+          # 备用方案：使用repository_dispatch
+          echo "同时尝试repository_dispatch方式..."
+          curl -X POST \
+            -H "Authorization: token $PAT" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/QiushiZhou/resumeAPI/dispatches \
+            -d '{
+              "event_type": "trigger_deployment",
+              "client_payload": {
+                "server_host": "http://'"$IP"'",
+                "compose_file": "'"$COMPOSE_PATH"'"
+              }
+            }'
