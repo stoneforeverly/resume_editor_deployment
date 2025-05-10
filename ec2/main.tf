@@ -26,7 +26,7 @@ resource "aws_security_group" "allow_ssh" {
 
 # Add rule for HTTP traffic on port 443
   ingress {
-    description = "HTTP on port 443"
+    description = "HTTPS on port 443"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
