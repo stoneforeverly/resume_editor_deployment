@@ -51,15 +51,19 @@ jobs:
          cat ip.txt  # 调试输出
          echo "======================="
  
-  build-image: 
-    name: AWS ECR preparation
-    needs: terraform
-    uses: QiushiZhou/resumeAPI/.github/workflows/build-push.yml@main
-    with: 
-      VITE_SERVER_HOST: "http://$(cat ip.txt)"
-      DOCKER_COMPOSE_FILE: ${{ github.event.inputs.compose-file-path }}
-    permissions:
-      id-token: write  # <-- IMPORTANT: Add this line
-      packages: write
-      contents: read 
-      
+  trigger-remote-build:
+   name: Trigger remote repository build
+   needs: terraform
+   runs-on: ubuntu-latest
+   steps:
+     - name: Get EC2 IP
+       run: |
+         terraform output -raw instance_public_ip > ip.txt
+     
+     - name: Trigger remote workflow
+       uses: peter-evans/repository-dispatch@v1
+       with:
+         token: ${{ secrets.PAT }}
+         repository: QiushiZhou/resumeAPI
+         event-type: trigger-build
+         client-payload: '{"VITE_SERVER_HOST": "http://$(cat ip.txt)", "DOCKER_COMPOSE_FILE": "${{ github.event.inputs.compose-file-path }}"}'
