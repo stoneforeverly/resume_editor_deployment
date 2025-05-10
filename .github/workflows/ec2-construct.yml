@@ -76,18 +76,29 @@ jobs:
     needs: terraform
     runs-on: ubuntu-latest
     steps:
-      - name: Download IP file
-        uses: actions/download-artifact@v4
-        with:
-          name: ip-data
-          path: ip_data
+      # ... (前面的步骤保持不变) ...
 
-      - name: Read IP address
-        id: read-ip
+      - name: Get target workflow inputs
+        id: get-inputs
+        env:
+          PAT: ${{ secrets.PAT }}
         run: |
-          IP=$(cat ip_data/ip.txt | tr -d '[:space:]')
-          echo "final_ip=$IP" >> $GITHUB_OUTPUT
-          echo "验证通过的IP地址: $IP"
+          RESPONSE=$(curl -s -H "Authorization: token $PAT" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml)
+          
+          # 检查输入参数定义
+          INPUTS=$(echo "$RESPONSE" | jq -r '.on.workflow_dispatch.inputs | to_entries[] | "\(.key)"')
+          
+          if [ -z "$INPUTS" ]; then
+            echo "::error::目标工作流没有定义输入参数"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+          
+          echo "目标工作流接受的输入参数:"
+          echo "$INPUTS"
+          echo "INPUTS_JSON=$(echo "$RESPONSE" | jq -c '.on.workflow_dispatch.inputs')" >> $GITHUB_OUTPUT
 
       - name: Trigger remote workflow
         env:
@@ -96,6 +107,12 @@ jobs:
           IP=${{ steps.read-ip.outputs.final_ip }}
           COMPOSE_PATH="${{ github.event.inputs.compose-file-path }}"
           
+          # 从输入参数定义中获取正确的参数名
+          FIRST_INPUT=$(echo '${{ steps.get-inputs.outputs.INPUTS_JSON }}' | jq -r 'keys[0]')
+          SECOND_INPUT=$(echo '${{ steps.get-inputs.outputs.INPUTS_JSON }}' | jq -r 'keys[1]')
+          
+          echo "使用参数名: $FIRST_INPUT 和 $SECOND_INPUT"
+          
           curl -X POST \
             -H "Authorization: token $PAT" \
             -H "Accept: application/vnd.github.v3+json" \
@@ -103,7 +120,7 @@ jobs:
             -d '{
               "ref": "main",
               "inputs": {
-                "VITE_SERVER_HOST": "http://'"$IP"'",
-                "DOCKER_COMPOSE_FILE": "'"$COMPOSE_PATH"'"
+                "'"$FIRST_INPUT"'": "http://'"$IP"'",
+                "'"$SECOND_INPUT"'": "'"$COMPOSE_PATH"'"
               }
             }'
