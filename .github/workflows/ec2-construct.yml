@@ -47,78 +47,61 @@ jobs:
       - name: Get EC2 IP 
         id: get-ip
         run: |
-          # 精确提取IP并验证格式
-          RAW_IP=$(terraform output -raw instance_public_ip)
-          IP=$(echo "$RAW_IP" | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
-          
-          if [[ -z "$IP" ]]; then
-            echo "::error::无法提取有效IP地址，原始输出: $RAW_IP"
-            exit 1
-          fi
-          
-          # 在工作目录内创建ip_data文件夹
-          mkdir -p ip_data
-          echo "${IP}" > ip_data/ip.txt
-          echo "提取的IP地址: ${IP}"
-
-      - name: Upload IP data
-        uses: actions/upload-artifact@v4
-        with:
-          name: ip-data
-          path: ec2/ip_data/ip.txt  # 使用相对于仓库根目录的路径
-          retention-days: 1
+          IP=$(terraform output -raw instance_public_ip | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+          echo "IP_ADDRESS=$IP" >> $GITHUB_OUTPUT
+          echo "提取的IP地址: $IP"
 
   trigger-remote-build:
     name: Trigger remote repository build
     needs: terraform
     runs-on: ubuntu-latest
     steps:
-      # ... (前面的下载IP步骤保持不变) ...
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Trigger remote workflow
-        uses: actions/github-script@v6
+      - name: Install curl and jq
+        run: sudo apt-get update && sudo apt-get install -y curl jq
+
+      - name: Trigger remote workflow with curl
         env:
           PAT: ${{ secrets.PAT }}
-        with:
-          script: |
-            const { PAT } = process.env;
-            const ip = `${{ steps.read-ip.outputs.final_ip }}`;
-            const composePath = `${{ github.event.inputs.compose-file-path }}`;
-            
-            try {
-              // 使用内置的github对象而不是Octokit
-              console.log('准备触发远程工作流...');
-              
-              // 1. 首先检查工作流是否存在
-              const workflow = await github.rest.actions.getWorkflow({
-                owner: 'QiushiZhou',
-                repo: 'resumeAPI',
-                workflow_id: 'build-push.yml'
-              });
-              
-              console.log('目标工作流输入参数:', workflow.data.inputs);
-              
-              // 2. 使用内置的github对象触发工作流
-              const response = await github.rest.actions.createWorkflowDispatch({
-                owner: 'QiushiZhou',
-                repo: 'resumeAPI',
-                workflow_id: 'build-push.yml',
-                ref: 'main',
-                inputs: {
-                  // 根据实际需要调整参数名
-                  host: `http://${ip}`,
-                  compose_file: composePath
-                }
-              });
-              
-              console.log(`成功触发工作流，状态码: ${response.status}`);
-              console.log(`使用的IP地址: ${ip}`);
-            } catch (error) {
-              core.setFailed(`触发失败: ${error.message}`);
-              console.log('详细错误信息:', error.response?.data || error);
-              console.log('建议检查:');
-              console.log('1. PAT是否有repo和workflow权限');
-              console.log('2. 目标工作流是否存在且参数名匹配');
-              console.log('3. 目标仓库是否可访问');
-              console.log('4. 输入参数:', { host: `http://${ip}`, compose_file: composePath });
-            }
+        run: |
+          IP=${{ steps.get-ip.outputs.IP_ADDRESS }}
+          COMPOSE_PATH="${{ github.event.inputs.compose-file-path }}"
+
+          echo "准备触发工作流，使用参数:"
+          echo "IP: $IP"
+          echo "Compose路径: $COMPOSE_PATH"
+
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: token $PAT" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Content-Type: application/json" \
+            https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml/dispatches \
+            -d '{
+              "ref": "main",
+              "inputs": {
+                "host": "http://'"$IP"'",
+                "compose_file": "'"$COMPOSE_PATH"'"
+              }
+            }' 2>&1)
+
+          # 检查curl是否成功
+          if [ $? -ne 0 ]; then
+            echo "::error::API调用失败"
+            echo "$RESPONSE"
+            exit 1
+          fi
+
+          # 检查API响应
+          ERROR_MSG=$(echo "$RESPONSE" | jq -r '.message' 2>/dev/null)
+          if [ "$ERROR_MSG" != "null" ] && [ -n "$ERROR_MSG" ]; then
+            echo "::error::触发失败: $ERROR_MSG"
+            echo "完整响应:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+          echo "工作流触发成功"
+          echo "API响应:"
+          echo "$RESPONSE" | jq .
