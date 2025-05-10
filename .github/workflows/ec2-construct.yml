@@ -50,6 +50,20 @@ jobs:
            echo "===== IP 文件内容 ====="
            cat ip.txt  # 调试输出
            echo "======================="
+          # 使用awk提取纯IP（更可靠的方式）
+          IP=$(awk 'match($0, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/) { print substr($0, RSTART, RLENGTH) }' ip.txt)
+          
+          # 验证IP格式
+          if [[ ! $IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: Invalid IP format: $IP"
+            exit 1
+          fi
+          
+          # 正确设置GITHUB_OUTPUT（新语法）
+          echo "IP_ADDRESS=$IP" >> $GITHUB_ENV
+          echo "ip_address=$IP" >> $GITHUB_OUTPUT
+          
+          echo "Extracted IP: $IP"
 
   trigger-remote-build:
     name: Trigger remote repository build
@@ -61,16 +75,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
-      - name: Read IP address
-        id: ip
-        run: |
-          IP=$(cat ip.txt | tr -d '\n') # 移除可能的换行符
-          echo "IP_ADDRESS=$IP" >> $GITHUB_OUTPUT
 
       - name: Debug variables
         run: |
-          echo "IP: ${{ steps.ip.outputs.IP_ADDRESS }}"
+          echo "IP: ${{ steps.ip.outputs.ip_address }}"
           echo "Compose Path: ${{ github.event.inputs.compose-file-path }}"
 
       - name: Trigger remote workflow
@@ -82,6 +90,6 @@ jobs:
           ref: main # 目标分支
           inputs: |
             {
-              "VITE_SERVER_HOST": "http://${{ steps.get-ip.outputs.IP_ADDRESS }}",
+              "VITE_SERVER_HOST": "http://${{ steps.get-ip.outputs.ip_address }}",
               "DOCKER_COMPOSE_FILE": "${{ github.event.inputs.compose-file-path }}"  
             }
