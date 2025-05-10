@@ -24,7 +24,7 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    - name: Setup SSH Connection (Base64)
+    - name: Setup SSH Connection (Direct Write)
       run: |
         # Install dependencies
         sudo apt-get update -y
@@ -34,18 +34,37 @@ jobs:
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
         
-        # Decode base64 encoded key
-        echo "${{ secrets.EC2_SSH_PRIVATE_KEY_BASE64 }}" | base64 -d > ~/.ssh/id_ed25519
+        # Write key with direct heredoc and strict validation
+        cat << 'EOF' > ~/.ssh/id_ed25519
+        ${{ secrets.EC2_SSH_PRIVATE_KEY}}
+        EOF
+        
+        # Strict key processing
+        sed -i '/^-----BEGIN OPENSSH PRIVATE KEY-----/,/^-----END OPENSSH PRIVATE KEY-----/!d' ~/.ssh/id_ed25519
+        sed -i '/^$/d' ~/.ssh/id_ed25519
         chmod 600 ~/.ssh/id_ed25519
         
-        # Verify key
-        echo "=== Key Info ==="
-        file ~/.ssh/id_ed25519
-        ssh-keygen -l -f ~/.ssh/id_ed25519 || (echo "Key validation failed" && exit 1)
+        # Binary validation
+        echo "=== Key Byte Count ==="
+        wc -c ~/.ssh/id_ed25519
+        echo "=== First 50 bytes ==="
+        head -c 50 ~/.ssh/id_ed25519 | xxd
+        echo "=== Last 50 bytes ==="
+        tail -c 50 ~/.ssh/id_ed25519 | xxd
+        
+        if ! ssh-keygen -l -f ~/.ssh/id_ed25519; then
+          echo "=== RAW KEY CONTENT ==="
+          cat ~/.ssh/id_ed25519
+          exit 1
+        fi
         
         # Start SSH agent
         eval $(ssh-agent -s)
-        ssh-add ~/.ssh/id_ed25519 || (echo "Failed to add key to agent" && exit 1)
+        if ! ssh-add ~/.ssh/id_ed25519; then
+          echo "=== SSH-ADD DEBUG ==="
+          ssh-add -vvv ~/.ssh/id_ed25519
+          exit 1
+        fi
         
         # Configure known hosts
         ssh-keyscan -H ${{ env.EC2_IP }} > ~/.ssh/known_hosts
@@ -54,15 +73,15 @@ jobs:
     - name: Verify Connection
       run: |
         ssh -T -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
-          echo "SSH connection successful!"
-          docker --version || echo "Docker not found"
+          echo "SUCCESS: Connected to $(hostname)"
+          docker --version || echo "WARNING: Docker not found"
         EOF
 
     - name: Deploy Application
       run: |
         scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/deploy.sh
         ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
-          set -e
+          set -ex
           chmod +x ~/deploy.sh
           sudo ~/deploy.sh
         EOF
