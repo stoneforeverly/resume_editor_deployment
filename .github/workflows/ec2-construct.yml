@@ -50,25 +50,21 @@ jobs:
            echo "===== IP 文件内容 ====="
            cat ip.txt  # 调试输出
            echo "======================="
-          # 使用awk提取纯IP（更可靠的方式）
-          IP=$(awk 'match($0, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/) { print substr($0, RSTART, RLENGTH) }' ip.txt)
-          
-          # 正确设置GITHUB_OUTPUT（新语法）
-          echo "IP_ADDRESS=$IP" >> $GITHUB_ENV
-          echo "ip_address=$IP" >> $GITHUB_OUTPUT
-          
-          echo "Extracted IP: $IP"
 
   trigger-remote-build:
     name: Trigger remote repository build
     needs: terraform
     runs-on: ubuntu-latest
-    defaults: 
-      run: 
-        working-directory: ./ec2/ 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Read IP address
+        id: ip
+        run: |
+          working-directory: ./ec2/ 
+          IP=$(cat ip.txt)
+          echo "IP_ADDRESS=$IP" >> $GITHUB_OUTPUT
 
       - name: Debug variables
         run: |
