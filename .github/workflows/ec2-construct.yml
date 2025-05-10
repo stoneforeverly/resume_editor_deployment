@@ -89,7 +89,7 @@ jobs:
           # 根据目标工作流定义调整参数名
           # 这里假设目标工作流接受 VITE_SERVER_HOST 和 DOCKER_COMPOSE_FILE
           # 请根据上一步的输出调整
-          IP=${{ needs.terraform.outputs.IP_ADDRESS }}
+          IP="${{ needs.terraform.outputs.IP_ADDRESS }}"
           COMPOSE_PATH="${{ github.event.inputs.compose-file-path }}"
 
           echo "使用参数:"
