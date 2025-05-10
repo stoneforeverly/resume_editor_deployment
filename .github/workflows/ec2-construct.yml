@@ -45,52 +45,43 @@ jobs:
         run: terraform apply -auto-approve 
 
       - name: Get EC2 IP 
-        id: get-ip
         run: |
-          IP=$(terraform output -raw instance_public_ip)
-          echo "$IP" > ../ip.txt  # 保存到上层目录
-          echo "IP_ADDRESS=$IP" >> $GITHUB_OUTPUT
-          echo "===== IP 地址 ====="
-          echo "$IP"
-          echo "==================="
-
-      - name: Upload IP file
-        uses: actions/upload-artifact@v3
-        with:
-          name: ip-file
-          path: ../ip.txt
+          terraform output -raw instance_public_ip > ip.txt
+           echo "===== IP 文件内容 ====="
+           cat ip.txt  # 调试输出
+           echo "======================="
 
   trigger-remote-build:
     name: Trigger remote repository build
     needs: terraform
     runs-on: ubuntu-latest
+    defaults: 
+      run: 
+        working-directory: ./ec2/ 
     steps:
-      - name: Download IP file
-        uses: actions/download-artifact@v3
-        with:
-          name: ip-file
-
+      - name: Checkout
+        uses: actions/checkout@v4
+      
       - name: Read IP address
-        id: read-ip
+        id: ip
         run: |
-          IP=$(cat ip.txt | tr -d '\n')  # 移除可能的换行符
-          echo "ip_address=$IP" >> $GITHUB_OUTPUT
-          echo "读取到的IP: $IP"
+          IP=$(cat ip.txt | tr -d '\n') # 移除可能的换行符
+          echo "IP_ADDRESS=$IP" >> $GITHUB_OUTPUT
 
       - name: Debug variables
         run: |
-          echo "IP: ${{ steps.read-ip.outputs.ip_address }}"
+          echo "IP: ${{ steps.ip.outputs.IP_ADDRESS }}"
           echo "Compose Path: ${{ github.event.inputs.compose-file-path }}"
 
       - name: Trigger remote workflow
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: build-push.yml
-          repo: QiushiZhou/resumeAPI
-          token: ${{ secrets.PAT }}
-          ref: main
+          workflow: build-push.yml # 目标工作流文件名
+          repo: QiushiZhou/resumeAPI # 目标仓库
+          token: ${{ secrets.PAT }} # 需要个人访问令牌(PAT)
+          ref: main # 目标分支
           inputs: |
             {
-              "VITE_SERVER_HOST": "http://${{ steps.read-ip.outputs.ip_address }}",
-              "DOCKER_COMPOSE_FILE": "${{ github.event.inputs.compose-file-path }}"
+              "VITE_SERVER_HOST": "http://${{ steps.get-ip.outputs.IP_ADDRESS }}",
+              "DOCKER_COMPOSE_FILE": "${{ github.event.inputs.compose-file-path }}"  
             }
