@@ -46,25 +46,10 @@ jobs:
 
       - name: Get EC2 IP 
         run: |
-          # 先检查terraform输出是否正常
-          terraform output -raw instance_public_ip > raw_ip.txt
-          echo "Raw terraform output:"
-          cat raw_ip.txt
-          
-          # 使用awk提取纯IP（更可靠的方式）
-          IP=$(awk 'match($0, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/) { print substr($0, RSTART, RLENGTH) }' raw_ip.txt)
-          
-          # 验证IP格式
-          if [[ ! $IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "ERROR: Invalid IP format: $IP"
-            exit 1
-          fi
-          
-          # 正确设置GITHUB_OUTPUT（新语法）
-          echo "IP_ADDRESS=$IP" >> $GITHUB_ENV
-          echo "ip_address=$IP" >> $GITHUB_OUTPUT
-          
-          echo "Extracted IP: $IP"
+          terraform output -raw instance_public_ip > ip.txt
+           echo "===== IP 文件内容 ====="
+           cat ip.txt  # 调试输出
+           echo "======================="
 
   trigger-remote-build:
     name: Trigger remote repository build
@@ -85,7 +70,7 @@ jobs:
 
       - name: Debug variables
         run: |
-          echo "IP: ${{ steps.ip.outputs.ip_address }}"
+          echo "IP: ${{ steps.ip.outputs.IP_ADDRESS }}"
           echo "Compose Path: ${{ github.event.inputs.compose-file-path }}"
 
       - name: Trigger remote workflow
@@ -97,6 +82,6 @@ jobs:
           ref: main # 目标分支
           inputs: |
             {
-              "VITE_SERVER_HOST": "http://${{ steps.ip.outputs.ip_address }}",
+              "VITE_SERVER_HOST": "http://$(cat ip.txt)",
               "DOCKER_COMPOSE_FILE": "${{ github.event.inputs.compose-file-path }}"  
             }
