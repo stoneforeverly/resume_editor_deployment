@@ -12,7 +12,11 @@ docker rm resume-frontend  resume-backend
 # docker stop editor-frontend editor-backend market-frontend market-backend
 # docker rm editor-frontend editor-backend market-frontend market-backend
 
-docker network create resume-network || true
+docker network rm my-app-network 2>/dev/null || true
+docker network rm resume-network 2>/dev/null || true
+
+# 创建新网络（与docker-compose.yml完全一致）
+docker network create --driver bridge resume-network
 
 # Pull the latest images
 docker pull ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/resume_backend-repo:backend-latest
