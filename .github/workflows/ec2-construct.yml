@@ -67,7 +67,7 @@ jobs:
 
       - name: Debug variables
         run: |
-          echo "IP: ${{ steps.ip.outputs.ip_address }}"
+          echo "IP: ${{ steps.ip.outputs.IP_ADDRESS }}"
           echo "Compose Path: ${{ github.event.inputs.compose-file-path }}"
 
       - name: Trigger remote workflow
@@ -79,6 +79,6 @@ jobs:
           ref: main # 目标分支
           inputs: |
             {
-              "VITE_SERVER_HOST": "http://${{ steps.get-ip.outputs.ip_address }}",
+              "VITE_SERVER_HOST": "http://${{ steps.get-ip.outputs.IP_ADDRESS }}",
               "DOCKER_COMPOSE_FILE": "${{ github.event.inputs.compose-file-path }}"  
             }
