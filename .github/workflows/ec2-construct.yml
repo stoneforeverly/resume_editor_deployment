@@ -54,8 +54,8 @@ jobs:
           IP=$(awk 'match($0, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/) { print substr($0, RSTART, RLENGTH) }' ip.txt)
           
           # 验证IP格式
-          if [[ ! $IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "ERROR: Invalid IP format: $IP"
+           if [[ ! $IP =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            echo "::error::提取的IP格式无效: '$IP'"
             exit 1
           fi
           
