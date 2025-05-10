@@ -56,19 +56,16 @@ jobs:
             exit 1
           fi
           
-          # 使用新语法设置输出
-          echo "ip_address=${IP}" >> ${GITHUB_OUTPUT}
-          
-          # 替代环境变量方案：直接写入文件供后续job读取
-          mkdir -p ../ip_data
-          echo "${IP}" > ../ip_data/ip.txt
+          # 在工作目录内创建ip_data文件夹
+          mkdir -p ip_data
+          echo "${IP}" > ip_data/ip.txt
           echo "提取的IP地址: ${IP}"
 
       - name: Upload IP data
         uses: actions/upload-artifact@v4
         with:
           name: ip-data
-          path: ../ip_data/ip.txt
+          path: ec2/ip_data/ip.txt  # 使用相对于仓库根目录的路径
           retention-days: 1
 
   trigger-remote-build:
@@ -80,12 +77,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ip-data
-          path: ./ip_data
+          path: ip_data  # 下载到当前工作目录
 
       - name: Read IP address
         id: read-ip
         run: |
-          IP=$(cat ./ip_data/ip.txt | tr -d '[:space:]')
+          IP=$(cat ip_data/ip.txt | tr -d '[:space:]')
           if [[ ! $IP =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
             echo "::error::无效的IP地址格式: $IP"
             exit 1
@@ -107,7 +104,6 @@ jobs:
                 workflow_id: 'build-push.yml',
                 ref: 'main',
                 inputs: {
-                  // 根据实际目标工作流调整参数名
                   target_host: `http://${ip}`,
                   docker_compose_path: composePath
                 }
@@ -115,8 +111,5 @@ jobs:
               console.log(`成功触发工作流，IP: ${ip}`);
             } catch (error) {
               core.setFailed(`触发失败: ${error.message}`);
-              console.log('建议检查:');
-              console.log('1. PAT权限是否正确');
-              console.log('2. 目标工作流输入参数定义');
-              console.log('3. 工作流文件路径是否正确');
+              console.log('建议检查目标工作流的输入参数定义是否匹配');
             }
