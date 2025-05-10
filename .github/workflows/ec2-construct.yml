@@ -58,7 +58,8 @@ jobs:
     with: 
       VITE_SERVER_HOST: "http://$(cat ip.txt)"
       DOCKER_COMPOSE_FILE: ${{ github.event.inputs.compose-file-path }}
-    permissions: 
-      packages: write 
+    permissions:
+      id-token: write  # <-- IMPORTANT: Add this line
+      packages: write
       contents: read 
-     
+      
