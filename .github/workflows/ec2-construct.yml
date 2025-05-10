@@ -98,9 +98,11 @@ jobs:
             const composePath = `${{ github.event.inputs.compose-file-path }}`;
             
             try {
-              const octokit = github.getOctokit(PAT);
+              // 正确初始化octokit
+              const { Octokit } = require("@octokit/rest");
+              const octokit = new Octokit({ auth: PAT });
               
-              // 首先获取目标工作流定义
+              // 1. 首先获取目标工作流定义
               const workflow = await octokit.rest.actions.getWorkflow({
                 owner: 'QiushiZhou',
                 repo: 'resumeAPI',
@@ -109,23 +111,26 @@ jobs:
               
               console.log('目标工作流输入参数:', workflow.data.inputs);
               
-              // 根据实际参数名触发
-              await octokit.rest.actions.createWorkflowDispatch({
+              // 2. 根据实际参数名触发
+              const response = await octokit.rest.actions.createWorkflowDispatch({
                 owner: 'QiushiZhou',
                 repo: 'resumeAPI',
                 workflow_id: 'build-push.yml',
                 ref: 'main',
                 inputs: {
-                  // 根据上一步输出调整参数名
+                  // 根据实际需要调整参数名
                   host: `http://${ip}`,
                   compose_file: composePath
                 }
               });
               
-              console.log(`成功触发工作流，IP: ${ip}`);
+              console.log(`成功触发工作流，状态码: ${response.status}`);
+              console.log(`IP地址: ${ip}`);
             } catch (error) {
-              core.setFailed(`触发失败: ${error.message}\n建议检查:`);
+              core.setFailed(`触发失败: ${error.message}`);
+              console.log('详细错误信息:', error);
+              console.log('建议检查:');
               console.log('1. PAT是否有repo和workflow权限');
-              console.log('2. 参数名是否匹配目标工作流定义');
-              console.log('3. 目标仓库是否存在该工作流');
+              console.log('2. 目标工作流是否存在且参数名匹配');
+              console.log('3. 目标仓库是否可访问');
             }
