@@ -90,7 +90,7 @@ jobs:
           echo "DOCKER_COMPOSE_FILE: ${{ github.event.inputs.compose-file-path }}"
           
       - name: Trigger remote workflow
-        uses: benc-uk/workflow-dispatch@v2
+        uses: benc-uk/workflow-dispatch@v1
         with:
          script: |
             try {
