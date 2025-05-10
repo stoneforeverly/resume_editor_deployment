@@ -76,44 +76,25 @@ jobs:
     needs: terraform
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger remote workflow
-        uses: actions/github-script@v6
+      - name: Trigger with curl
         env:
-          PAT: ${{ secrets.PAT_WITH_WORKFLOW_ACCESS }}
-        with:
-          script: |
-            const ip = `${{ steps.read-ip.outputs.final_ip }}`;
-            const composePath = `${{ github.event.inputs.compose-file-path }}`;
-            
-            try {
-              // 使用内置的github对象
-              console.log('准备触发工作流，参数:', { 
-                host: `http://${ip}`,
-                compose_file: composePath 
-              });
-
-              // 直接使用内置的github客户端
-              await github.rest.actions.createWorkflowDispatch({
-                owner: 'QiushiZhou',
-                repo: 'resumeAPI',
-                workflow_id: 'build-push.yml',
-                ref: 'main',
-                inputs: {
-                  VITE_SERVER_HOST: `http://${ip}`,
-                  DOCKER_COMPOSE_FILE: composePath
-                }
-              });
-
-              console.log('触发成功');
-            } catch (error) {
-              core.setFailed(`触发失败: ${error.message}`);
-              console.log('完整错误信息:', {
-                message: error.message,
-                response: error.response?.data,
-                stack: error.stack
-              });
-              console.log('请检查:');
-              console.log('1. 确保PAT有repo和workflow权限');
-              console.log('2. 目标工作流是否正确定义了inputs参数');
-              console.log('3. 工作流文件路径是否正确');
-            }
+          PAT: ${{ secrets.PAT }}
+        run: |
+          IP=${{ steps.read-ip.outputs.final_ip }}
+          COMPOSE_PATH="${{ github.event.inputs.compose-file-path }}"
+      
+          echo "触发参数:"
+          echo "IP: http://$IP"
+          echo "Compose路径: $COMPOSE_PATH"
+      
+          curl -X POST \
+            -H "Authorization: token $PAT" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/QiushiZhou/resumeAPI/actions/workflows/build-push.yml/dispatches \
+            -d '{
+              "ref": "main",
+              "inputs": {
+                "VITE_SERVER_HOST": "http://'"$IP"'",
+                "DOCKER_COMPOSE_FILE": "'"$COMPOSE_PATH"'"
+              }
+            }'
