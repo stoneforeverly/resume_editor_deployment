@@ -82,26 +82,18 @@ jobs:
           PAT: ${{ secrets.PAT_WITH_WORKFLOW_ACCESS }}
         with:
           script: |
-            const { PAT } = process.env;
             const ip = `${{ steps.read-ip.outputs.final_ip }}`;
             const composePath = `${{ github.event.inputs.compose-file-path }}`;
             
             try {
-              // 使用正确的Octokit初始化方式
-              const { Octokit } = require("@octokit/rest");
-              const octokit = new Octokit({ auth: PAT });
-              
-              // 1. 首先获取目标工作流定义
-              const workflow = await octokit.rest.actions.getWorkflow({
-                owner: 'QiushiZhou',
-                repo: 'resumeAPI',
-                workflow_id: 'build-push.yml'
+              // 使用内置的github对象
+              console.log('准备触发工作流，参数:', { 
+                host: `http://${ip}`,
+                compose_file: composePath 
               });
-              
-              console.log('目标工作流输入参数:', workflow.data.inputs);
-              
-              // 2. 触发工作流
-              const response = await octokit.rest.actions.createWorkflowDispatch({
+
+              // 直接使用内置的github客户端
+              await github.rest.actions.createWorkflowDispatch({
                 owner: 'QiushiZhou',
                 repo: 'resumeAPI',
                 workflow_id: 'build-push.yml',
@@ -111,14 +103,17 @@ jobs:
                   DOCKER_COMPOSE_FILE: composePath
                 }
               });
-              
-              console.log(`成功触发工作流，状态码: ${response.status}`);
-              console.log(`使用的IP地址: ${ip}`);
+
+              console.log('触发成功');
             } catch (error) {
               core.setFailed(`触发失败: ${error.message}`);
-              console.log('详细错误信息:', error.response?.data || error);
-              console.log('建议检查:');
-              console.log('1. PAT是否有repo和workflow权限');
-              console.log('2. 目标工作流是否存在且参数名匹配');
-              console.log('3. 目标仓库是否可访问');
+              console.log('完整错误信息:', {
+                message: error.message,
+                response: error.response?.data,
+                stack: error.stack
+              });
+              console.log('请检查:');
+              console.log('1. 确保PAT有repo和workflow权限');
+              console.log('2. 目标工作流是否正确定义了inputs参数');
+              console.log('3. 工作流文件路径是否正确');
             }
