@@ -25,6 +25,7 @@ jobs:
         aws-region: ${{ env.AWS_REGION }}
 
     - name: Setup SSH Connection
+      id: ssh-setup
       run: |
         # Install dependencies
         sudo apt-get update -y
@@ -34,94 +35,69 @@ jobs:
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
         
-        # Write private key with proper formatting
-        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/temp_key
-        # Remove any Windows line endings
-        sed -i 's/\r$//' ~/.ssh/temp_key
-        # Remove any GitHub-added formatting
-        sed -i '/^\*\*\*/,/^\*\*\*/d' ~/.ssh/temp_key
-        # Remove leading/trailing whitespace
-        sed -i 's/^[ \t]*//;s/[ \t]*$//' ~/.ssh/temp_key
+        # Write private key
+        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
         
-        # Verify key content
-        echo "=== Key Content Start ==="
-        head -n 5 ~/.ssh/temp_key
-        echo "..."
-        tail -n 5 ~/.ssh/temp_key
-        echo "=== Key Content End ==="
-        
-        # Ensure key has proper BEGIN/END markers
-        if grep -q "BEGIN OPENSSH PRIVATE KEY" ~/.ssh/temp_key; then
-          echo "Detected OpenSSH format key"
-          mv ~/.ssh/temp_key ~/.ssh/id_ed25519
-        elif grep -q "BEGIN RSA PRIVATE KEY" ~/.ssh/temp_key; then
-          echo "Detected RSA format key"
-          mv ~/.ssh/temp_key ~/.ssh/id_rsa
-        else
-          echo "=== ERROR: Unknown key format ==="
-          cat ~/.ssh/temp_key
-          echo "==============================="
-          exit 1
-        fi
-        
-        chmod 600 ~/.ssh/id_ed25519 || chmod 600 ~/.ssh/id_rsa
-        
-        # Verify key format
-        echo "=== Key Verification ==="
-        KEY_FILE=$(ls ~/.ssh/id_ed25519 ~/.ssh/id_rsa 2>/dev/null | head -n1)
-        ssh-keygen -l -f $KEY_FILE || (echo "Key validation failed" && exit 1)
-        echo "======================"
+        # Verify key
+        echo "=== Key Info ==="
+        ssh-keygen -l -f ~/.ssh/id_ed25519 || exit 1
         
         # Start SSH agent
         eval $(ssh-agent -s)
-        
-        # Add key to agent
-        if ! ssh-add $KEY_FILE; then
-          echo "=== Debug: Key Content Hexdump ==="
-          hexdump -C $KEY_FILE | head -n 20
-          echo "================================"
-          exit 1
-        fi
+        ssh-add ~/.ssh/id_ed25519 || exit 1
         
         # Configure known hosts
         ssh-keyscan -H ${{ env.EC2_IP }} >> ~/.ssh/known_hosts
         chmod 600 ~/.ssh/known_hosts
-
-    - name: Deploy to EC2
-      run: |
-        # Determine key file
-        KEY_FILE=$(ls ~/.ssh/id_ed25519 ~/.ssh/id_rsa 2>/dev/null | head -n1)
         
         # Test connection
-        ssh -i $KEY_FILE -T -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} exit
-        
+        ssh -T -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} exit || exit 1
+
+    - name: Deploy to EC2
+      if: steps.ssh-setup.outcome == 'success'
+      run: |
         # Copy update script
-        scp -i $KEY_FILE -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ 
+        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ || exit 1
         
         # Execute remote commands
-        ssh -i $KEY_FILE -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
-          # Install Docker if not exists
+        ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
+          set -e  # Exit immediately if any command fails
+          
+          # Install Docker
           if ! command -v docker &> /dev/null; then
             sudo yum update -y
             sudo yum install -y docker
             sudo systemctl start docker
             sudo systemctl enable docker
             sudo usermod -aG docker $USER
-            newgrp docker
+            # Need to logout/login for group change to take effect
+            # Using newgrp as a workaround
+            newgrp docker << 'INNER'
+              # Install AWS CLI if needed
+              if ! command -v aws &> /dev/null; then
+                sudo yum install -y awscli
+              fi
+              
+              # Execute update script
+              export OPENAI_API_KEY=$OPENAI_API_KEY
+              export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+              export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+              export AWS_REGION=$AWS_REGION
+              chmod +x ~/ec2_update.sh
+              ~/ec2_update.sh
+            INNER
+          else
+            # Docker already installed
+            newgrp docker << 'INNER'
+              export OPENAI_API_KEY=$OPENAI_API_KEY
+              export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+              export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+              export AWS_REGION=$AWS_REGION
+              chmod +x ~/ec2_update.sh
+              ~/ec2_update.sh
+            INNER
           fi
-          
-          # Install AWS CLI if not exists
-          if ! command -v aws &> /dev/null; then
-            sudo yum install -y awscli
-          fi
-          
-          # Execute update script
-          export OPENAI_API_KEY=$OPENAI_API_KEY
-          export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-          export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-          export AWS_REGION=$AWS_REGION
-          chmod +x ~/ec2_update.sh
-          ~/ec2_update.sh
         EOF
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
