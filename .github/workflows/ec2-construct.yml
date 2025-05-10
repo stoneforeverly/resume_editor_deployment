@@ -72,7 +72,7 @@ jobs:
           retention-days: 1
 
   trigger-remote-build:
-     name: Trigger remote repository build
+    name: Trigger remote repository build
     needs: terraform
     runs-on: ubuntu-latest
     steps:
