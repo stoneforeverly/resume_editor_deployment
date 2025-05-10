@@ -19,8 +19,8 @@ docker pull ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/resume
 # docker pull ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/market-backend:latest
 
 # Run the new containers
-docker run -d --name editor-frontend -p 3001:80 ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/resume_backend-repo:frontend-latest
-docker run -d --name editor-backend -p 5000:5001 -e OPENAI_API_KEY=${OPENAI_API_KEY} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/resume_backend-repo:frontend-latest
+docker run -d --name editor-frontend --network my-app-network --network-alias backend -p 3001:80 ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/resume_backend-repo:frontend-latest
+docker run -d --name editor-backend --network my-app-network --network-alias backend -p 5000:5001 -e OPENAI_API_KEY=${OPENAI_API_KEY} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/resume_backend-repo:frontend-latest
 # docker run -d --name market-frontend -p 3000:3000 ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/market-frontend:latest
 # docker run -d --name market-backend -p 5001:5001 ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/market-backend:latest
 
