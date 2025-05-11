@@ -26,7 +26,7 @@ resource "aws_security_group" "allow_ssh" {
 
   ingress {
     description = "ICMP ping"
-    from_port   = -1  # ICMP类型为-1
+    from_port   = 8  # ICMP类型为-1
     to_port     = -1  # ICMP代码为-1
     protocol    = "icmp"
     cidr_blocks = ["0.0.0.0/0"]
