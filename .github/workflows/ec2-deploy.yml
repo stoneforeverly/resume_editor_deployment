@@ -5,7 +5,7 @@ on:
 env:
   AWS_REGION: ap-southeast-2
   UPDATE_SCRIPT: .github/workflows/ec2_update.sh
-  EC2_IP: 13.236.165.153
+  EC2_IP: 3.104.77.41
   SSH_USER: ec2-user  # Ubuntu系统改为'ubuntu'
 
 jobs:
