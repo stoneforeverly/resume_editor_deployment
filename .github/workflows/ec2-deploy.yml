@@ -2,10 +2,11 @@ name: EC2 Deploy
 
 on:
   workflow_dispatch:
-# 定义环境变量  
-env:  
+env:
   AWS_REGION: ap-southeast-2
   UPDATE_SCRIPT: .github/workflows/ec2_update.sh
+  EC2_IP: 13.236.165.153
+  SSH_USER: ec2-user
 
 jobs:
   deploy:
@@ -23,46 +24,98 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    - name: Create Private Key File
+    - name: Setup SSH Connection
+      id: ssh-setup
       run: |
-        # 安装依赖，如果必要
-        which ssh-agent || ( apt-get update -y && apt-get install openssh-client git -y )
+        set -e  # 任何命令失败立即退出
         
-        # 启动 ssh-agent
-        eval $(ssh-agent -s)
+        # 安装依赖
+        sudo apt-get update -y
+        sudo apt-get install -y openssh-client git
         
-        # 创建 SSH 目录并设置权限
+        # 创建SSH目录
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
         
-        # 将私钥写入文件
-        echo "=== Private Key ==="
-        echo "${{ secrets.AWS_SSH_PRIVATE_KEY }}"
-        echo "${{ secrets.AWS_SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_ed
-        chmod 600 ~/.ssh/id_ed
+        # 写入私钥（改进的处理方式）
+        echo "打印私钥内容..."
+        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}"
+        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_ed25519
         
-        # 检查私钥格式
-        echo "=== Checking SSH Key ==="
-        ssh-keygen -l -f ~/.ssh/id_ed || { echo "::error::Invalid SSH Key Format"; exit 1; }
+        # 确保密钥文件格式正确
+        sed -i -e '/^$/d' -e 's/^[[:blank:]]*//' -e 's/[[:blank:]]*$//' ~/.ssh/id_ed25519
         
-        # 将私钥添加到 ssh-agent
-        ssh-add ~/.ssh/id_ed
+        # 检查密钥文件是否包含必要的标记
+        if ! grep -q "BEGIN OPENSSH PRIVATE KEY" ~/.ssh/id_ed25519 || ! grep -q "END OPENSSH PRIVATE KEY" ~/.ssh/id_ed25519; then
+          echo "::error::SSH private key format is invalid - missing BEGIN/END markers"
+          exit 1
+        fi
         
-        # 检查 ssh-agent 中的密钥
-        echo "=== Listing SSH Keys ==="
-        ssh-add -l
+        # 设置严格权限
+        chmod 600 ~/.ssh/id_ed25519
         
-        # 创建 known_hosts 文件并添加 EC2 主机密钥
-        touch ~/.ssh/known_hosts
+        # 验证密钥格式
+        echo "验证SSH密钥格式..."
+        if ! ssh-keygen -l -f ~/.ssh/id_ed25519; then
+          echo "::error::Invalid SSH Key Format"
+          echo "密钥文件内容:"
+          cat ~/.ssh/id_ed25519
+          exit 1
+        fi
+        
+        # 设置SSH agent
+        eval $(ssh-agent -s)
+        echo "添加SSH密钥到agent..."
+        if ! ssh-add ~/.ssh/id_ed25519; then
+          echo "::error::Failed to add SSH key"
+          echo "调试信息:"
+          ssh-add -l
+          exit 1
+        fi
+        
+        # 添加EC2到known_hosts
+        echo "添加主机到known_hosts..."
+        ssh-keyscan -H ${{ env.EC2_IP }} >> ~/.ssh/known_hosts
         chmod 600 ~/.ssh/known_hosts
-        ssh-keyscan -H 13.236.165.153 >> ~/.ssh/known_hosts
         
-        # 将更新脚本传输到 EC2
-        scp -o StrictHostKeyChecking=no -i ~/.ssh/id_ed -r .github/workflows/ec2_update.sh ec2-user@13.236.165.153:/home/ec2-user/
+        # 测试连接（增加详细输出）
+        echo "测试SSH连接..."
+        if ! ssh -vvv -o StrictHostKeyChecking=no -T ${{ env.SSH_USER }}@${{ env.EC2_IP }} "echo 'SSH connection test successful'"; then
+          echo "::error::SSH connection test failed"
+          exit 1
+        fi
+
+    - name: Deploy to EC2
+      if: steps.ssh-setup.outcome == 'success'
+      run: |
+        set -e  # 任何命令失败立即退出
         
-        # 在 EC2 上执行脚本
-        ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed ec2-user@13.236.165.153 << 'EOF'
-          export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          chmod +x /home/ec2-user/ec2_update.sh
-          /home/ec2-user/ec2_update.sh
-        EOF
+        echo "=== Transferring update script ==="
+        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ || {
+          echo "::error::Failed to transfer script"
+          exit 1
+        }
+        
+        echo "=== Executing remote commands ==="
+        ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'DEPLOY_EOF'
+          set -ex
+          export OPENAI_API_KEY=$OPENAI_API_KEY
+          
+          # 确保脚本可执行
+          chmod +x ~/ec2_update.sh
+          
+          # Docker设置
+          if ! command -v docker &>/dev/null; then
+            sudo yum install -y docker || sudo apt-get install -y docker.io
+            sudo systemctl start docker
+            sudo usermod -aG docker $USER
+          fi
+          
+          # 临时权限修复
+          sudo chmod 666 /var/run/docker.sock || true
+          
+          # 执行更新脚本
+          sudo ~/ec2_update.sh
+        DEPLOY_EOF
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
