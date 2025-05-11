@@ -6,7 +6,7 @@ env:
   AWS_REGION: ap-southeast-2
   UPDATE_SCRIPT: .github/workflows/ec2_update.sh
   EC2_IP: 13.236.165.153
-  SSH_USER: ec2-user  # 对于Ubuntu实例应改为'ubuntu'
+  SSH_USER: ec2-user  # 对于Ubuntu实例改为'ubuntu'
 
 jobs:
   deploy:
@@ -33,51 +33,40 @@ jobs:
         sudo apt-get update -y
         sudo apt-get install -y openssh-client git jq curl
         
-        # 创建SSH目录
+        # 创建SSH配置
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
         
-        # 获取GitHub Actions runner的公共IP
+        # 获取Runner公共IP用于安全组调试
         RUNNER_IP=$(curl -s https://api.ipify.org)
-        echo "Runner Public IP: $RUNNER_IP"
+        echo "::notice::Runner Public IP: $RUNNER_IP"
         
-        # 写入私钥（完整格式处理）
-        cat <<EOF > ~/.ssh/id_ed25519
-        ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-        EOF
-        
-        # 清理密钥文件格式
-        sed -i -e '/^$/d' -e 's/^[[:blank:]]*//' -e 's/[[:blank:]]*$//' ~/.ssh/id_ed25519
+        # 写入私钥
+        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
         chmod 600 ~/.ssh/id_ed25519
         
-        # 验证密钥格式
-        echo "-----BEGIN SSH私钥验证-----"
-        ssh-keygen -l -f ~/.ssh/id_ed25519 || {
-          echo "::error::SSH密钥格式验证失败"
+        # 验证密钥
+        if ! ssh-keygen -l -f ~/.ssh/id_ed25519; then
+          echo "::error::SSH Key Validation Failed"
           exit 1
-        }
+        fi
         
-        # 配置SSH agent
+        # 配置SSH
         eval $(ssh-agent -s)
-        ssh-add ~/.ssh/id_ed25519 || {
-          echo "::error::无法添加SSH密钥到agent"
-          exit 1
-        }
+        ssh-add ~/.ssh/id_ed25519
         
-        # 配置known_hosts（增加超时和重试）
-        ssh-keyscan -H -T 10 ${{ env.EC2_IP }} >> ~/.ssh/known_hosts 2>/dev/null || {
-          echo "::warning::无法添加主机到known_hosts，将禁用严格检查"
-          echo -e "Host ${{ env.EC2_IP }}\n  StrictHostKeyChecking no\n  UserKnownHostsFile=/dev/null" > ~/.ssh/config
-        }
+        # 禁用严格主机检查（临时方案）
+        echo -e "Host ${{ env.EC2_IP }}\n  StrictHostKeyChecking no\n  UserKnownHostsFile=/dev/null" > ~/.ssh/config
         
-        # 测试连接（增加详细日志）
-        echo "-----测试SSH连接-----"
-        ssh -vvv -o ConnectTimeout=15 -T ${{ env.SSH_USER }}@${{ env.EC2_IP }} <<EOF || {
-          echo "::error::SSH连接测试失败"
+        # 测试连接（简化版）
+        if ! ssh -o ConnectTimeout=15 -T ${{ env.SSH_USER }}@${{ env.EC2_IP }} "echo 'SSH Test Successful'"; then
+          echo "::error::SSH Connection Failed"
+          echo "Debug Info:"
+          echo "1. 确保EC2安全组已放行IP: $RUNNER_IP"
+          echo "2. 确认用户名正确: ${{ env.SSH_USER }}"
+          echo "3. 检查EC2实例是否运行SSH服务"
           exit 1
-        }
-        echo "SSH连接成功"
-        EOF
+        fi
 
     - name: Deploy to EC2
       if: steps.ssh-setup.outcome == 'success'
@@ -85,20 +74,20 @@ jobs:
         set -ex
         echo "=== 传输更新脚本 ==="
         scp -o ConnectTimeout=15 ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ || {
-          echo "::error::脚本传输失败"
+          echo "::error::文件传输失败"
           exit 1
         }
         
-        echo "=== 执行远程命令 ==="
-        ssh -o ConnectTimeout=15 ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'DEPLOY_EOF'
+        echo "=== 执行远程部署 ==="
+        ssh -o ConnectTimeout=15 ${{ env.SSH_USER }}@${{ env.EC2_IP }} <<'DEPLOY_EOF'
           set -ex
           export OPENAI_API_KEY=$OPENAI_API_KEY
           
-          # 安装Docker（兼容不同Linux发行版）
+          # 安装Docker（兼容多平台）
           if ! command -v docker &>/dev/null; then
-            if grep -q 'Amazon Linux' /etc/os-release; then
+            if [ -f /etc/redhat-release ]; then
               sudo yum install -y docker
-            elif grep -q 'Ubuntu' /etc/os-release; then
+            elif [ -f /etc/lsb-release ]; then
               sudo apt-get update
               sudo apt-get install -y docker.io
             fi
@@ -106,7 +95,7 @@ jobs:
             sudo usermod -aG docker $(whoami)
           fi
           
-          # 执行更新脚本
+          # 执行更新
           chmod +x ~/ec2_update.sh
           sudo ~/ec2_update.sh
         DEPLOY_EOF
