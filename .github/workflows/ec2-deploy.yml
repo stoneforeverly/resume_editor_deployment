@@ -36,6 +36,8 @@ jobs:
         chmod 700 ~/.ssh
         
         # 将私钥写入文件
+        echo "=== Private Key ==="
+        echo "${{ secrets.AWS_SSH_PRIVATE_KEY }}"
         echo "${{ secrets.AWS_SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_ed
         chmod 600 ~/.ssh/id_ed
         
