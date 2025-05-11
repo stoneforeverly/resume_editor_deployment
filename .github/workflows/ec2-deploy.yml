@@ -6,7 +6,7 @@ env:
   AWS_REGION: ap-southeast-2
   UPDATE_SCRIPT: .github/workflows/ec2_update.sh
   EC2_IP: 3.104.77.41
-  SSH_USER: ec2-user  # Ubuntu系统改为'ubuntu'
+  SSH_USER: ec2-user
 
 jobs:
   deploy:
@@ -17,70 +17,100 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v3
 
-    - name: Configure AWS Credentials
+    - name: Set up AWS CLI
       uses: aws-actions/configure-aws-credentials@v2
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    - name: Update Security Group
-      run: |
-        set -ex
-        # 自动更新安全组规则
-        RUNNER_IP=$(curl -s https://api.ipify.org)
-        aws ec2 authorize-security-group-ingress \
-          --group-id ${{ secrets.EC2_SECURITY_GROUP_ID }} \
-          --protocol tcp \
-          --port 22 \
-          --cidr $RUNNER_IP/32
-
     - name: Setup SSH Connection
-      id: ssh-setup
       run: |
-        set -ex
-        # 安装依赖
+        # Install dependencies
         sudo apt-get update -y
-        sudo apt-get install -y openssh-client netcat
-
-        # 配置SSH
+        sudo apt-get install -y openssh-client git
+        
+        # Setup SSH directory
         mkdir -p ~/.ssh
-        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+        chmod 700 ~/.ssh
+        
+        # Write private key with proper formatting
+        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/temp_key
+        # Remove any Windows line endings
+        sed -i 's/\r$//' ~/.ssh/temp_key
+        # Remove any GitHub-added formatting
+        sed -i '/^\*\*\*/,/^\*\*\*/d' ~/.ssh/temp_key
+        # Remove any leading/trailing whitespace
+        sed -i 's/^[ \t]*//;s/[ \t]*$//' ~/.ssh/temp_key
+        
+        # Verify key content
+        echo "=== Key Content Start ==="
+        head -n 5 ~/.ssh/temp_key
+        echo "..."
+        tail -n 5 ~/.ssh/temp_key
+        echo "=== Key Content End ==="
+        
+        # Ensure key has proper BEGIN/END markers
+        if ! grep -q "BEGIN OPENSSH PRIVATE KEY" ~/.ssh/temp_key; then
+          echo "Adding missing OPENSSH header/footer"
+          echo "-----BEGIN OPENSSH PRIVATE KEY-----" > ~/.ssh/id_ed25519
+          cat ~/.ssh/temp_key >> ~/.ssh/id_ed25519
+          echo "-----END OPENSSH PRIVATE KEY-----" >> ~/.ssh/id_ed25519
+        else
+          mv ~/.ssh/temp_key ~/.ssh/id_ed25519
+        fi
+        
         chmod 600 ~/.ssh/id_ed25519
-
-        # 测试端口连通性
-        if ! nc -zv -w 15 ${{ env.EC2_IP }} 22; then
-          echo "::error::Port 22 not reachable"
+        
+        # Verify key format
+        echo "=== Key Verification Attempt ==="
+        ssh-keygen -l -f ~/.ssh/id_ed25519 || echo "Key validation failed"
+        echo "=============================="
+        
+        # Start SSH agent
+        eval $(ssh-agent -s)
+        
+        # Add key to agent
+        if ! ssh-add ~/.ssh/id_ed25519; then
+          echo "=== Debug: Key Content Hexdump ==="
+          hexdump -C ~/.ssh/id_ed25519 | head -n 20
+          echo "================================"
           exit 1
         fi
-
-        # 配置免验证
-        echo -e "Host ${{ env.EC2_IP }}\n  StrictHostKeyChecking no\n  UserKnownHostsFile=/dev/null" > ~/.ssh/config
-
-        # 测试连接
-        if ! ssh -o ConnectTimeout=15 -T ${{ env.SSH_USER }}@${{ env.EC2_IP }} "echo 'SSH成功'"; then
-          echo "::error::SSH连接失败"
-          exit 1
-        fi
+        
+        # Configure known hosts
+        ssh-keyscan -H ${{ env.EC2_IP }} >> ~/.ssh/known_hosts
+        chmod 600 ~/.ssh/known_hosts
 
     - name: Deploy to EC2
-      if: steps.ssh-setup.outcome == 'success'
       run: |
-        set -ex
-        scp ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~
-        ssh ${{ env.SSH_USER }}@${{ env.EC2_IP }} <<'EOF'
-          set -ex
+        # Test connection
+        ssh -T -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} exit
+        
+        # Copy update script
+        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ 
+        
+        # Execute remote commands
+        ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'EOF'
+          # Install Docker if not exists
+          if ! command -v docker &> /dev/null; then
+            sudo yum update -y
+            sudo yum install -y docker
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            sudo usermod -aG docker $USER
+          fi
+          
+          # Install AWS CLI if not exists
+          if ! command -v aws &> /dev/null; then
+            sudo yum install -y awscli
+          fi
+          
+          # Execute update script
+          export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          export AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+          export AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          export AWS_REGION=${{ env.AWS_REGION }}
           chmod +x ~/ec2_update.sh
-          sudo ~/ec2_update.sh
+          ~/ec2_update.sh
         EOF
-
-    - name: Cleanup Security Group
-      if: always()
-      run: |
-        set -ex
-        RUNNER_IP=$(curl -s https://api.ipify.org)
-        aws ec2 revoke-security-group-ingress \
-          --group-id ${{ secrets.EC2_SECURITY_GROUP_ID }} \
-          --protocol tcp \
-          --port 22 \
-          --cidr $RUNNER_IP/32
