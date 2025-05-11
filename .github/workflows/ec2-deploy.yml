@@ -37,16 +37,11 @@ jobs:
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
         
-        # 写入私钥
-        {
-          echo "-----BEGIN OPENSSH PRIVATE KEY-----"
-          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" | \
-            sed -e '/-----BEGIN OPENSSH PRIVATE KEY-----/d' \
-                -e '/-----END OPENSSH PRIVATE KEY-----/d' \
-                -e 's/^[[:space:]]*//' \
-                -e 's/[[:space:]]*$//'
-          echo "-----END OPENSSH PRIVATE KEY-----"
-        } > ~/.ssh/id_ed25519
+        # 写入私钥（直接使用完整密钥内容）
+        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+        
+        # 确保密钥文件格式正确
+        sed -i -e '/^$/d' -e '/^[[:space:]]*$/d' ~/.ssh/id_ed25519
         
         # 设置严格权限
         chmod 600 ~/.ssh/id_ed25519
@@ -80,13 +75,13 @@ jobs:
         set -e  # 任何命令失败立即退出
         
         echo "=== Transferring update script ==="
-        scp -o StrictHostKeyChecking=no -v ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ || {
+        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ || {
           echo "::error::Failed to transfer script"
           exit 1
         }
         
         echo "=== Executing remote commands ==="
-        ssh -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'DEPLOY_EOF'
+        ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'DEPLOY_EOF'
           set -ex
           export OPENAI_API_KEY=$OPENAI_API_KEY
           
