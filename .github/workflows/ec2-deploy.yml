@@ -27,15 +27,17 @@ jobs:
     - name: Setup SSH Connection
       id: ssh-setup
       run: |
-        # Install dependencies
+        set -e  # 任何命令失败立即退出
+        
+        # 安装依赖
         sudo apt-get update -y
         sudo apt-get install -y openssh-client git
         
-        # Create SSH directory
+        # 创建SSH目录
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
         
-        # Write the private key with proper formatting
+        # 写入私钥
         {
           echo "-----BEGIN OPENSSH PRIVATE KEY-----"
           echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" | \
@@ -46,51 +48,62 @@ jobs:
           echo "-----END OPENSSH PRIVATE KEY-----"
         } > ~/.ssh/id_ed25519
         
-        # Set strict permissions
+        # 设置严格权限
         chmod 600 ~/.ssh/id_ed25519
         
-        # Verify key format
-        if ! ssh-keygen -l -f ~/.ssh/id_ed25519 >/dev/null; then
+        # 验证密钥格式
+        if ! ssh-keygen -l -f ~/.ssh/id_ed25519; then
           echo "::error::Invalid SSH Key Format"
           exit 1
         fi
         
-        # Setup SSH agent
+        # 设置SSH agent
         eval $(ssh-agent -s)
-        ssh-add ~/.ssh/id_ed25519
+        if ! ssh-add ~/.ssh/id_ed25519; then
+          echo "::error::Failed to add SSH key"
+          exit 1
+        fi
         
-        # Add EC2 to known hosts
+        # 添加EC2到known_hosts
         ssh-keyscan -H ${{ env.EC2_IP }} >> ~/.ssh/known_hosts
         chmod 600 ~/.ssh/known_hosts
-
-    - name: Test SSH Connection
-      if: steps.ssh-setup.outcome == 'success'
-      run: |
-        ssh -o StrictHostKeyChecking=no -T ${{ env.SSH_USER }}@${{ env.EC2_IP }} "echo 'SSH connection successful'"
+        
+        # 测试连接
+        if ! ssh -o StrictHostKeyChecking=no -T ${{ env.SSH_USER }}@${{ env.EC2_IP }} "echo 'SSH connection test successful'"; then
+          echo "::error::SSH connection test failed"
+          exit 1
+        fi
 
     - name: Deploy to EC2
       if: steps.ssh-setup.outcome == 'success'
       run: |
-        # Transfer update script
-        scp -o StrictHostKeyChecking=no ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ || {
+        set -e  # 任何命令失败立即退出
+        
+        echo "=== Transferring update script ==="
+        scp -o StrictHostKeyChecking=no -v ${{ env.UPDATE_SCRIPT }} ${{ env.SSH_USER }}@${{ env.EC2_IP }}:~/ || {
           echo "::error::Failed to transfer script"
           exit 1
         }
         
-        # Execute remote commands
-        ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'DEPLOY_EOF'
-          set -e
+        echo "=== Executing remote commands ==="
+        ssh -o StrictHostKeyChecking=no -v ${{ env.SSH_USER }}@${{ env.EC2_IP }} << 'DEPLOY_EOF'
+          set -ex
           export OPENAI_API_KEY=$OPENAI_API_KEY
+          
+          # 确保脚本可执行
           chmod +x ~/ec2_update.sh
           
-          # Docker setup
+          # Docker设置
           if ! command -v docker &>/dev/null; then
-            sudo yum install -y docker
+            sudo yum install -y docker || sudo apt-get install -y docker.io
             sudo systemctl start docker
             sudo usermod -aG docker $USER
           fi
           
-          # Execute update script
+          # 临时权限修复
+          sudo chmod 666 /var/run/docker.sock || true
+          
+          # 执行更新脚本
           sudo ~/ec2_update.sh
         DEPLOY_EOF
       env:
