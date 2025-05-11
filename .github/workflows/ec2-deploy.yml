@@ -5,7 +5,7 @@ on:
 env:
   AWS_REGION: ap-southeast-2
   UPDATE_SCRIPT: .github/workflows/ec2_update.sh
-  EC2_IP: 54.252.219.100
+  EC2_IP: 54.206.124.89
   SSH_USER: ec2-user
 
 jobs:
