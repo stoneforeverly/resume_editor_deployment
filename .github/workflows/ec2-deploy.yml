@@ -52,11 +52,9 @@ jobs:
         # 设置严格权限
         chmod 600 ~/.ssh/id_ed25519
         
-        # 验证密钥格式
-        if ! ssh-keygen -l -f ~/.ssh/id_ed25519; then
-          echo "::error::Invalid SSH Key Format"
-          exit 1
-        fi
+        # 输出密钥格式，确保密钥正确
+        echo "=== Checking SSH Key ==="
+        ssh-keygen -l -f ~/.ssh/id_ed25519 || { echo "::error::Invalid SSH Key Format"; exit 1; }
         
         # 设置SSH agent
         eval $(ssh-agent -s)
@@ -64,6 +62,10 @@ jobs:
           echo "::error::Failed to add SSH key"
           exit 1
         fi
+        
+        # 检查添加的密钥
+        echo "=== Listing SSH Keys ==="
+        ssh-add -l
         
         # 添加EC2到known_hosts
         ssh-keyscan -H ${{ env.EC2_IP }} >> ~/.ssh/known_hosts
