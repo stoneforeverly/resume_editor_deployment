@@ -7,7 +7,6 @@ env:
   AWS_REGION: ap-southeast-2
   UPDATE_SCRIPT: .github/workflows/ec2_update.sh
 
-
 jobs:
   deploy:
     name: Deploy Docker Images to EC2
@@ -26,18 +25,41 @@ jobs:
 
     - name: Create Private Key File
       run: |
+        # Install dependencies if necessary
         which ssh-agent || ( apt-get update -y && apt-get install openssh-client git -y )
+        
+        # Start ssh-agent
         eval $(ssh-agent -s)
+        
+        # Create SSH directory and set permissions
         mkdir -p ~/.ssh
-        echo "${{vars.AWS_SSH_PRIVATE_KEY}}" | tr -d '\r' > ~/.ssh/id_ed
+        chmod 700 ~/.ssh
+
+        # Write private key into the id_ed file (removes potential carriage returns)
+        echo "${{ secrets.AWS_SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_ed
         chmod 600 ~/.ssh/id_ed
+
+        # Check if the private key is loaded correctly
+        echo "=== Checking SSH Key ==="
+        ssh-keygen -l -f ~/.ssh/id_ed || { echo "::error::Invalid SSH Key Format"; exit 1; }
+
+        # Add the private key to the ssh-agent
         ssh-add ~/.ssh/id_ed
-        touch ~/.ssh/config
+
+        # Check that the key has been added to the agent
+        echo "=== Listing SSH Keys ==="
+        ssh-add -l
+
+        # Create known_hosts file and add EC2 host key to it
         touch ~/.ssh/known_hosts
         chmod 600 ~/.ssh/known_hosts
-        ssh-keyscan 13.236.165.153 >> ~/.ssh/known_hosts
-        scp -o StrictHostKeyChecking=no -r ${{ env.UPDATE_SCRIPT }} ec2-user@13.236.165.153:/home/ec2-user/
-        ssh -o StrictHostKeyChecking=no ec2-user@13.236.165.153 << 'EOF'
+        ssh-keyscan -H 13.236.165.153 >> ~/.ssh/known_hosts
+        
+        # Transfer the update script to EC2
+        scp -o StrictHostKeyChecking=no -i ~/.ssh/id_ed -r ${{ env.UPDATE_SCRIPT }} ec2-user@13.236.165.153:/home/ec2-user/
+
+        # Execute the script on EC2
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed ec2-user@13.236.165.153 << 'EOF'
           export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
           chmod +x /home/ec2-user/ec2_update.sh
           /home/ec2-user/ec2_update.sh
