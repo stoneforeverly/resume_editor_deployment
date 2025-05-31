@@ -27,8 +27,9 @@ docker pull ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/modifi
 # Run the new containers
 docker run -d --name resume-frontend --network resume-network --network-alias backend -p 3001:80 ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/resume_backend-repo:frontend-latest
 docker run -d --name resume-backend --network resume-network --network-alias backend -p 5000:8080 -e OPENAI_API_KEY=${OPENAI_API_KEY} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/resume_backend-repo:backend-latest
+docker run -d --name market-backend --network resume-network --network-alias backend -p 5001:5000 -e OPENAI_API_KEY=${OPENAI_API_KEY} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/modifier-repo:latest
 # docker run -d --name market-frontend -p 3000:3000 ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/market-frontend:latest
-docker run -d --name market-backend -p 5001:5001 ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/market-backend:latest
+# docker run -d --name market-backend -p 5001:5001 ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/market-backend:latest
 
 # Clean up old images
 docker image prune -f
